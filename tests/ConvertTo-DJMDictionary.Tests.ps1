@@ -8,7 +8,7 @@ Describe 'ConvertTo-DJMDictionary' {
 
         It 'returns a Dictionary[string, PSObject]' {
             $result = ConvertTo-DJMDictionary -Hashtable @{ Foo = 'bar' }
-            $result | Should -BeOfType [System.Collections.Generic.Dictionary[string, PSObject]]
+            ($result -is [System.Collections.Generic.Dictionary[string, PSObject]]) | Should -BeTrue
         }
 
         It 'copies all key-value pairs from the hashtable' {
