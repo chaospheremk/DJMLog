@@ -11,7 +11,14 @@ Describe 'Write-DJMLog' {
 
     AfterEach {
         Remove-Item -LiteralPath $script:LogFile -ErrorAction SilentlyContinue
-        InModuleScope DJMLog { $script:DefaultLogPath = $null }
+        InModuleScope DJMLog {
+            $script:DefaultLogPath          = $null
+            $script:DefaultMinLevel         = 'DEBUG'
+            $script:DefaultRotationSchedule = 'None'
+            $script:DefaultRetainDays       = 0
+            $script:DefaultRetainFiles      = 0
+            $script:DefaultIncludeCaller    = $true
+        }
     }
 
     Context 'Basic entry writing' {
@@ -118,12 +125,6 @@ Describe 'Write-DJMLog' {
             $entry.Metadata.Region      | Should -Be 'UKSouth'
         }
 
-        It 'omits the Metadata key when no metadata is supplied' {
-            Write-DJMLog -Message 'No metadata'
-            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
-            $entry.PSObject.Properties.Name | Should -Not -Contain 'Metadata'
-        }
-
         It 'stores unsupported metadata types under Metadata.RawValue' {
             Write-DJMLog -Message 'Raw meta' -Metadata 'plain string'
             $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
@@ -191,6 +192,229 @@ Describe 'Write-DJMLog' {
                 Get-ChildItem -Path $dir -Filter "${base}*.jsonl" |
                     Remove-Item -ErrorAction SilentlyContinue
             }
+        }
+
+        It 'rotates daily when the file was created yesterday' {
+            $dir  = [System.IO.Path]::GetTempPath()
+            $base = "djmlog-daily-$([guid]::NewGuid().Guid)"
+            $log  = Join-Path $dir "$base.jsonl"
+            try {
+                [System.IO.File]::WriteAllText($log, '{}')
+                [System.IO.File]::SetCreationTimeUtc($log, [datetime]::UtcNow.AddDays(-1))
+                Write-DJMLog -Message 'Daily rotation trigger' -LogPath $log -RotationSchedule Daily
+                $rotated = Get-ChildItem -Path $dir -Filter "${base}_*.jsonl"
+                $rotated | Should -Not -BeNullOrEmpty
+            }
+            finally {
+                Get-ChildItem -Path $dir -Filter "${base}*.jsonl" |
+                    Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'does not rotate when RotationSchedule is None and the file is old' {
+            $dir  = [System.IO.Path]::GetTempPath()
+            $base = "djmlog-norot-$([guid]::NewGuid().Guid)"
+            $log  = Join-Path $dir "$base.jsonl"
+            try {
+                [System.IO.File]::WriteAllText($log, '{}')
+                [System.IO.File]::SetCreationTimeUtc($log, [datetime]::UtcNow.AddDays(-30))
+                Write-DJMLog -Message 'No rotation' -LogPath $log -RotationSchedule None
+                $rotated = Get-ChildItem -Path $dir -Filter "${base}_*.jsonl"
+                $rotated | Should -BeNullOrEmpty
+            }
+            finally {
+                Get-ChildItem -Path $dir -Filter "${base}*.jsonl" |
+                    Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'rotates hourly when the file was created in a prior hour' {
+            $dir  = [System.IO.Path]::GetTempPath()
+            $base = "djmlog-hourly-$([guid]::NewGuid().Guid)"
+            $log  = Join-Path $dir "$base.jsonl"
+            try {
+                [System.IO.File]::WriteAllText($log, '{}')
+                [System.IO.File]::SetCreationTimeUtc($log, [datetime]::UtcNow.AddHours(-2))
+                Write-DJMLog -Message 'Hourly rotation trigger' -LogPath $log -RotationSchedule Hourly
+                $rotated = Get-ChildItem -Path $dir -Filter "${base}_*.jsonl"
+                $rotated | Should -Not -BeNullOrEmpty
+            }
+            finally {
+                Get-ChildItem -Path $dir -Filter "${base}*.jsonl" |
+                    Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'Minimum level threshold' {
+
+        It 'does not write an entry whose level is below the module threshold' {
+            InModuleScope DJMLog { $script:DefaultMinLevel = 'WARN' }
+            Write-DJMLog -Message 'Should be suppressed' -Level INFO
+            (Get-Item -LiteralPath $script:LogFile).Length | Should -Be 0
+        }
+
+        It 'writes an entry whose level equals the module threshold' {
+            InModuleScope DJMLog { $script:DefaultMinLevel = 'WARN' }
+            Write-DJMLog -Message 'At threshold' -Level WARN
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            $entry.Message | Should -Be 'At threshold'
+        }
+
+        It 'writes an entry whose level is above the module threshold' {
+            InModuleScope DJMLog { $script:DefaultMinLevel = 'WARN' }
+            Write-DJMLog -Message 'Above threshold' -Level ERROR
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            $entry.Message | Should -Be 'Above threshold'
+        }
+
+        It 'suppresses DEBUG when module threshold is INFO' {
+            InModuleScope DJMLog { $script:DefaultMinLevel = 'INFO' }
+            Write-DJMLog -Message 'Debug suppressed' -Level DEBUG
+            (Get-Item -LiteralPath $script:LogFile).Length | Should -Be 0
+        }
+
+        It 'per-call -MinLevel suppresses entries below it regardless of module default' {
+            Write-DJMLog -Message 'Suppressed by per-call' -Level INFO -MinLevel ERROR
+            (Get-Item -LiteralPath $script:LogFile).Length | Should -Be 0
+        }
+
+        It 'per-call -MinLevel allows entries at or above it' {
+            InModuleScope DJMLog { $script:DefaultMinLevel = 'ERROR' }
+            Write-DJMLog -Message 'Allowed by per-call override' -Level INFO -MinLevel DEBUG
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            $entry.Message | Should -Be 'Allowed by per-call override'
+        }
+
+        It 'writes all four levels when MinLevel is DEBUG' {
+            InModuleScope DJMLog { $script:DefaultMinLevel = 'DEBUG' }
+            Write-DJMLog -Message 'D' -Level DEBUG
+            Write-DJMLog -Message 'I' -Level INFO
+            Write-DJMLog -Message 'W' -Level WARN
+            Write-DJMLog -Message 'E' -Level ERROR
+            (Get-Content -LiteralPath $script:LogFile).Count | Should -Be 4
+        }
+    }
+
+    Context 'Retention policy' {
+
+        It 'deletes rotated files older than RetainDays after rotation' {
+            $dir  = [System.IO.Path]::GetTempPath()
+            $base = "djmlog-retain-days-$([guid]::NewGuid().Guid)"
+            $log  = Join-Path $dir "$base.jsonl"
+            try {
+                # Create 2 old rotated files
+                $old1 = Join-Path $dir "${base}_20200101-000000.jsonl"
+                $old2 = Join-Path $dir "${base}_20200102-000000.jsonl"
+                [System.IO.File]::WriteAllText($old1, '{}')
+                [System.IO.File]::WriteAllText($old2, '{}')
+                [System.IO.File]::SetCreationTimeUtc($old1, [datetime]::UtcNow.AddDays(-10))
+                [System.IO.File]::SetCreationTimeUtc($old2, [datetime]::UtcNow.AddDays(-10))
+
+                # Trigger a size-based rotation with RetainDays = 1
+                [System.IO.File]::WriteAllText($log, '1234567890')
+                Write-DJMLog -Message 'Retention trigger' -LogPath $log -MaxSizeMB 0.000009 -RetainDays 1
+
+                $remaining = Get-ChildItem -Path $dir -Filter "${base}_*.jsonl"
+                # Old files should be gone; only the freshly rotated file remains
+                $remaining.Count | Should -Be 1
+                $remaining[0].Name | Should -Not -Be ([System.IO.Path]::GetFileName($old1))
+                $remaining[0].Name | Should -Not -Be ([System.IO.Path]::GetFileName($old2))
+            }
+            finally {
+                Get-ChildItem -Path $dir -Filter "${base}*.jsonl" |
+                    Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'keeps only RetainFiles most recent rotated files after rotation' {
+            $dir  = [System.IO.Path]::GetTempPath()
+            $base = "djmlog-retain-files-$([guid]::NewGuid().Guid)"
+            $log  = Join-Path $dir "$base.jsonl"
+            try {
+                # Pre-create 3 rotated files (older timestamps in filenames)
+                $r1 = Join-Path $dir "${base}_20240101-000000.jsonl"
+                $r2 = Join-Path $dir "${base}_20240102-000000.jsonl"
+                $r3 = Join-Path $dir "${base}_20240103-000000.jsonl"
+                [System.IO.File]::WriteAllText($r1, '{}')
+                [System.IO.File]::WriteAllText($r2, '{}')
+                [System.IO.File]::WriteAllText($r3, '{}')
+
+                # Trigger a size-based rotation with RetainFiles = 2
+                [System.IO.File]::WriteAllText($log, '1234567890')
+                Write-DJMLog -Message 'RetainFiles trigger' -LogPath $log -MaxSizeMB 0.000009 -RetainFiles 2
+
+                $remaining = Get-ChildItem -Path $dir -Filter "${base}_*.jsonl"
+                # 3 pre-existing + 1 just-rotated = 4 total before cleanup; keep 2 newest
+                $remaining.Count | Should -Be 2
+            }
+            finally {
+                Get-ChildItem -Path $dir -Filter "${base}*.jsonl" |
+                    Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'does not delete any files when RetainDays and RetainFiles are both 0' {
+            $dir  = [System.IO.Path]::GetTempPath()
+            $base = "djmlog-retain-zero-$([guid]::NewGuid().Guid)"
+            $log  = Join-Path $dir "$base.jsonl"
+            try {
+                $old = Join-Path $dir "${base}_20200101-000000.jsonl"
+                [System.IO.File]::WriteAllText($old, '{}')
+                [System.IO.File]::SetCreationTimeUtc($old, [datetime]::UtcNow.AddDays(-3650))
+
+                [System.IO.File]::WriteAllText($log, '1234567890')
+                Write-DJMLog -Message 'No cleanup' -LogPath $log -MaxSizeMB 0.000009 -RetainDays 0 -RetainFiles 0
+
+                $remaining = Get-ChildItem -Path $dir -Filter "${base}_*.jsonl"
+                $remaining.Count | Should -Be 2
+            }
+            finally {
+                Get-ChildItem -Path $dir -Filter "${base}*.jsonl" |
+                    Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'Caller auto-capture' {
+
+        It 'includes Metadata.Caller in the entry by default' {
+            Write-DJMLog -Message 'Caller default'
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            $entry.Metadata.Caller | Should -Not -BeNullOrEmpty
+        }
+
+        It 'Metadata.Caller.LineNumber is a positive integer' {
+            Write-DJMLog -Message 'Caller line'
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            $entry.Metadata.Caller.LineNumber | Should -BeGreaterThan 0
+        }
+
+        It '-NoCaller suppresses caller capture' {
+            Write-DJMLog -Message 'No caller' -NoCaller
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            $entry.Metadata.PSObject.Properties.Name | Should -Not -Contain 'Caller'
+        }
+
+        It 'Set-DJMLogConfig -IncludeCaller $false disables caller capture globally' {
+            Set-DJMLogConfig -IncludeCaller $false
+            Write-DJMLog -Message 'Global disable'
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            # No other metadata supplied, so Metadata key should be absent entirely
+            $entry.PSObject.Properties.Name | Should -Not -Contain 'Metadata'
+        }
+
+        It 'user-supplied Metadata.Caller is not overwritten by auto-capture' {
+            Write-DJMLog -Message 'User caller' -Metadata @{ Caller = 'my-custom-value' }
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            $entry.Metadata.Caller | Should -Be 'my-custom-value'
+        }
+
+        It 'Metadata.Caller is present alongside other metadata' {
+            Write-DJMLog -Message 'With meta' -Metadata @{ JobId = 99 }
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            $entry.Metadata.JobId   | Should -Be 99
+            $entry.Metadata.Caller  | Should -Not -BeNullOrEmpty
         }
     }
 }

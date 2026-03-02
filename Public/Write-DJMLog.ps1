@@ -16,9 +16,22 @@ function Write-DJMLog {
         Message       — The provided message string
         CorrelationId — GUID string linking related entries
 
+    Minimum level filtering:
+        When a module-level MinLevel has been configured via Set-DJMLogConfig
+        (or -MinLevel is passed per-call), entries whose level falls below the
+        threshold are silently discarded without acquiring the mutex or touching
+        the file. Level order: DEBUG < INFO < WARN < ERROR.
+
     When -Metadata is provided, its key-value pairs are written under a
     nested Metadata object. Hashtables and PSCustomObjects are both supported.
     Any other type is stored under Metadata.RawValue.
+
+    Caller auto-capture:
+        By default, Write-DJMLog captures the calling script name, function
+        name, and line number from the PowerShell call stack and stores them
+        under Metadata.Caller. Use -NoCaller to suppress this for a single
+        call, or Set-DJMLogConfig -IncludeCaller $false to disable globally.
+        A user-supplied Metadata.Caller value is never overwritten.
 
     When -ErrorObject is provided alongside -Level ERROR, error context is
     captured under Metadata.Error with the following fields:
@@ -30,12 +43,24 @@ function Write-DJMLog {
         Message         — Exception message text
 
     Log rotation:
-        When -MaxSizeMB is greater than zero (or a module-level maximum has
-        been configured via Set-DJMLogConfig), Write-DJMLog checks the current file
-        size at the start of each call. If the file meets or exceeds the
-        threshold, it is renamed with a UTC datestamp suffix and a fresh file
-        is started. The rotated file name uses the pattern:
+        Size-based: when -MaxSizeMB is greater than zero (or a module-level
+        maximum has been configured via Set-DJMLogConfig), Write-DJMLog checks
+        the current file size at the start of each call. If the file meets or
+        exceeds the threshold, it is rotated.
+
+        Time-based: when -RotationSchedule is Daily or Hourly (or configured
+        via Set-DJMLogConfig), the file's UTC creation time is compared to the
+        current period. If the file was created in a prior day or hour, it is
+        rotated before writing.
+
+        The rotated file name uses the pattern:
         <basename>_yyyyMMdd-HHmmss<extension>
+
+    Retention cleanup (runs only after a rotation):
+        -RetainDays N  — deletes rotated files older than N days.
+        -RetainFiles N — keeps only the N most recent rotated files.
+        Both can be used together; RetainDays runs first.
+        Set either to 0 (the default) to keep all rotated files.
 
     A non-terminating warning is emitted if the file cannot be written, if the
     mutex timeout expires before the write lock can be acquired, or if
@@ -84,6 +109,23 @@ function Write-DJMLog {
     with a UTC datestamp suffix and a new file is started. Set to 0 to
     disable. When omitted, the module-level value from Set-DJMLogConfig is used.
 
+    .PARAMETER MinLevel
+    Per-call minimum severity threshold. Entries whose level is below this
+    value are silently discarded. Overrides the module-level default set by
+    Set-DJMLogConfig for this call only.
+
+    .PARAMETER RotationSchedule
+    Per-call time-based rotation schedule. Overrides the module-level default
+    for this call only. Valid values: None, Daily, Hourly.
+
+    .PARAMETER RetainDays
+    After rotation, delete rotated files older than this many days. 0 keeps
+    all. When omitted, the module-level value from Set-DJMLogConfig is used.
+
+    .PARAMETER RetainFiles
+    After rotation, keep only the N most recent rotated files. 0 keeps all.
+    Applied after -RetainDays. When omitted, the module-level value is used.
+
     .PARAMETER Depth
     Maximum depth for JSON serialisation of the log entry. Deeply nested
     metadata objects beyond this depth are truncated by ConvertTo-Json.
@@ -94,6 +136,16 @@ function Write-DJMLog {
     If the timeout expires the entry is discarded and a non-terminating warning
     is emitted. Defaults to 2000ms. When omitted, the module-level value from
     Set-DJMLogConfig is used. Set to -1 to wait indefinitely.
+
+    .PARAMETER CallerDepth
+    Call stack frame offset for automatic caller capture. 1 (default) records
+    the direct caller of Write-DJMLog. Increase this when Write-DJMLog is
+    wrapped inside a helper function and you want to record that helper's
+    caller instead.
+
+    .PARAMETER NoCaller
+    Suppresses automatic caller capture for this call only. Use
+    Set-DJMLogConfig -IncludeCaller $false to disable globally.
 
     .PARAMETER PassThru
     When specified, emits the written log entry as a PSCustomObject to the
@@ -136,6 +188,10 @@ function Write-DJMLog {
     # Configure rotation once via Set-DJMLogConfig; all subsequent calls honour it
     Set-DJMLogConfig -Path 'C:\Logs\app.jsonl' -MaxSizeMB 100
     Write-DJMLog -Message 'Entry after rotation check'
+
+    .EXAMPLE
+    # Per-call level override — suppress this entry when module threshold is lower
+    Write-DJMLog -Message 'Verbose diagnostic' -Level DEBUG -MinLevel DEBUG
     #>
     [CmdletBinding()]
     [OutputType([PSCustomObject])]
@@ -170,12 +226,39 @@ function Write-DJMLog {
 
         [Parameter(ParameterSetName = 'Default')]
         [Parameter(ParameterSetName = 'Error')]
+        [ValidateSet("DEBUG", "INFO", "WARN", "ERROR", IgnoreCase = $true)]
+        [string]$MinLevel,
+
+        [Parameter(ParameterSetName = 'Default')]
+        [Parameter(ParameterSetName = 'Error')]
+        [ValidateSet("None", "Daily", "Hourly", IgnoreCase = $true)]
+        [string]$RotationSchedule,
+
+        [Parameter(ParameterSetName = 'Default')]
+        [Parameter(ParameterSetName = 'Error')]
+        [int]$RetainDays = -1,
+
+        [Parameter(ParameterSetName = 'Default')]
+        [Parameter(ParameterSetName = 'Error')]
+        [int]$RetainFiles = -1,
+
+        [Parameter(ParameterSetName = 'Default')]
+        [Parameter(ParameterSetName = 'Error')]
         [ValidateRange(1, 100)]
         [int]$Depth = 5,
 
         [Parameter(ParameterSetName = 'Default')]
         [Parameter(ParameterSetName = 'Error')]
         [int]$MutexTimeoutMs = -2,
+
+        [Parameter(ParameterSetName = 'Default')]
+        [Parameter(ParameterSetName = 'Error')]
+        [ValidateRange(1, [int]::MaxValue)]
+        [int]$CallerDepth = 1,
+
+        [Parameter(ParameterSetName = 'Default')]
+        [Parameter(ParameterSetName = 'Error')]
+        [switch]$NoCaller,
 
         [Parameter(ParameterSetName = 'Default')]
         [Parameter(ParameterSetName = 'Error')]
@@ -189,11 +272,14 @@ function Write-DJMLog {
                        else { "$(Get-Location)\log.jsonl" }
         }
 
-        # Resolve effective max size: explicit parameter (-1 sentinel) > module default
-        $effectiveMaxSizeMB = if ($MaxSizeMB -ge 0) { $MaxSizeMB } else { $script:DefaultMaxSizeMB }
-
-        # Resolve effective mutex timeout: explicit parameter (-2 sentinel) > module default
-        $effectiveMutexTimeoutMs = if ($MutexTimeoutMs -ne -2) { $MutexTimeoutMs } else { $script:DefaultMutexTimeoutMs }
+        # Resolve effective settings: explicit parameter > module default
+        $effectiveMaxSizeMB         = if ($MaxSizeMB -ge 0) { $MaxSizeMB } else { $script:DefaultMaxSizeMB }
+        $effectiveMutexTimeoutMs    = if ($MutexTimeoutMs -ne -2) { $MutexTimeoutMs } else { $script:DefaultMutexTimeoutMs }
+        $effectiveMinLevel          = if ($PSBoundParameters.ContainsKey('MinLevel'))         { $MinLevel.ToUpperInvariant()  } else { $script:DefaultMinLevel }
+        $effectiveRotationSchedule  = if ($PSBoundParameters.ContainsKey('RotationSchedule')) { $RotationSchedule             } else { $script:DefaultRotationSchedule }
+        $effectiveRetainDays        = if ($RetainDays  -ge 0) { $RetainDays  } else { $script:DefaultRetainDays }
+        $effectiveRetainFiles       = if ($RetainFiles -ge 0) { $RetainFiles } else { $script:DefaultRetainFiles }
+        $effectiveIncludeCaller     = -not $NoCaller.IsPresent -and $script:DefaultIncludeCaller
 
         $logDirectory = Split-Path -Parent $LogPath
 
@@ -209,27 +295,73 @@ function Write-DJMLog {
 
         $resolvedLogPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogPath)
 
-        # Rotation check
-        if ($effectiveMaxSizeMB -gt 0 -and (Test-Path -LiteralPath $LogPath)) {
+        # Rotation check — size-based and time-based combined
+        $shouldRotate = $false
+        if (Test-Path -LiteralPath $LogPath) {
             $fileInfo = [System.IO.FileInfo]::new($resolvedLogPath)
-            if (($fileInfo.Length / 1MB) -ge $effectiveMaxSizeMB) {
-                $timestamp   = [datetime]::UtcNow.ToString('yyyyMMdd-HHmmss')
-                $baseName    = [System.IO.Path]::GetFileNameWithoutExtension($resolvedLogPath)
-                $extension   = [System.IO.Path]::GetExtension($resolvedLogPath)
-                $directory   = [System.IO.Path]::GetDirectoryName($resolvedLogPath)
-                $rotatedPath = [System.IO.Path]::Combine($directory, "${baseName}_${timestamp}${extension}")
-                try {
-                    [System.IO.File]::Move($resolvedLogPath, $rotatedPath)
-                    Write-Verbose "Write-DJMLog: rotated log to '$rotatedPath'"
+
+            if ($effectiveMaxSizeMB -gt 0 -and ($fileInfo.Length / 1MB) -ge $effectiveMaxSizeMB) {
+                $shouldRotate = $true
+            }
+
+            if (-not $shouldRotate -and $effectiveRotationSchedule -ne 'None') {
+                if ($effectiveRotationSchedule -eq 'Daily') {
+                    $shouldRotate = $fileInfo.CreationTimeUtc.Date -lt [datetime]::UtcNow.Date
                 }
-                catch {
-                    Write-Warning "Write-DJMLog: failed to rotate log file: $_"
+                elseif ($effectiveRotationSchedule -eq 'Hourly') {
+                    $hourStart = [datetime]::UtcNow.Date.AddHours([datetime]::UtcNow.Hour)
+                    $shouldRotate = $fileInfo.CreationTimeUtc -lt $hourStart
+                }
+            }
+        }
+
+        if ($shouldRotate) {
+            $timestamp   = [datetime]::UtcNow.ToString('yyyyMMdd-HHmmss')
+            $baseName    = [System.IO.Path]::GetFileNameWithoutExtension($resolvedLogPath)
+            $extension   = [System.IO.Path]::GetExtension($resolvedLogPath)
+            $directory   = [System.IO.Path]::GetDirectoryName($resolvedLogPath)
+            $rotatedPath = [System.IO.Path]::Combine($directory, "${baseName}_${timestamp}${extension}")
+            try {
+                [System.IO.File]::Move($resolvedLogPath, $rotatedPath)
+                Write-Verbose "Write-DJMLog: rotated log to '$rotatedPath'"
+            }
+            catch {
+                Write-Warning "Write-DJMLog: failed to rotate log file: $_"
+            }
+
+            # Retention cleanup — runs only after a successful rotation
+            if ($effectiveRetainDays -gt 0 -or $effectiveRetainFiles -gt 0) {
+                $cleanupPattern = "${baseName}_????????-??????${extension}"
+                $rotatedFiles   = [System.IO.Directory]::GetFiles($directory, $cleanupPattern)
+
+                if ($effectiveRetainDays -gt 0) {
+                    $cutoff = [datetime]::UtcNow.AddDays(-$effectiveRetainDays)
+                    foreach ($file in $rotatedFiles) {
+                        if ([System.IO.File]::GetCreationTimeUtc($file) -lt $cutoff) {
+                            try   { [System.IO.File]::Delete($file) }
+                            catch { Write-Warning "Write-DJMLog: failed to delete old log '$file': $_" }
+                        }
+                    }
+                    $rotatedFiles = [System.IO.Directory]::GetFiles($directory, $cleanupPattern)
+                }
+
+                if ($effectiveRetainFiles -gt 0 -and $rotatedFiles.Count -gt $effectiveRetainFiles) {
+                    [System.Array]::Sort($rotatedFiles)  # ascending alphabetical = oldest first
+                    $deleteCount = $rotatedFiles.Count - $effectiveRetainFiles
+                    foreach ($file in $rotatedFiles[0..($deleteCount - 1)]) {
+                        try   { [System.IO.File]::Delete($file) }
+                        catch { Write-Warning "Write-DJMLog: failed to delete old log '$file': $_" }
+                    }
                 }
             }
         }
     }
 
     process {
+        # Level filter — discard entries below the effective minimum threshold
+        $levelOrder = @{ DEBUG = 0; INFO = 1; WARN = 2; ERROR = 3 }
+        if ($levelOrder[$Level.ToUpperInvariant()] -lt $levelOrder[$effectiveMinLevel]) { return }
+
         # Warn if ErrorObject supplied without Level ERROR — context will not be captured
         if ($ErrorObject -and $Level -ne 'ERROR') {
             Write-Warning "Write-DJMLog: -ErrorObject was supplied but -Level is '$Level', not 'ERROR'. Error context will not be captured. Set -Level ERROR to record error details."
@@ -305,6 +437,25 @@ function Write-DJMLog {
             $errorEntry['Message']         = $errorMessage
 
             $metadataEntry['Error'] = $errorEntry
+        }
+
+        # Caller auto-capture
+        if ($effectiveIncludeCaller) {
+            $callStack = Get-PSCallStack
+            if ($callStack.Count -gt $CallerDepth) {
+                $callerFrame = $callStack[$CallerDepth]
+                $callerEntry = [System.Collections.Generic.Dictionary[string, PSObject]]::new()
+                $callerEntry['ScriptName']   = if ([string]::IsNullOrEmpty($callerFrame.ScriptName))   { $null } else { $callerFrame.ScriptName }
+                $callerEntry['FunctionName'] = if ([string]::IsNullOrEmpty($callerFrame.FunctionName)) { $null } else { $callerFrame.FunctionName }
+                $callerEntry['LineNumber']   = $callerFrame.ScriptLineNumber
+
+                if ($null -eq $metadataEntry) {
+                    $metadataEntry = [System.Collections.Generic.Dictionary[string, PSObject]]::new()
+                }
+                if (-not $metadataEntry.ContainsKey('Caller')) {
+                    $metadataEntry['Caller'] = $callerEntry
+                }
+            }
         }
 
         if ($metadataEntry -and $metadataEntry.Count -gt 0) {
