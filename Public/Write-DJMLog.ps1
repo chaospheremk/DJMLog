@@ -253,7 +253,7 @@ function Write-DJMLog {
                 $convertedMetadata = ConvertTo-DJMDictionary -Hashtable $Metadata
                 foreach ($key in $convertedMetadata.Keys) { $metadataEntry[$key] = $convertedMetadata[$key] }
             }
-            elseif ($Metadata -is [PSCustomObject]) {
+            elseif ($Metadata.GetType().FullName -eq 'System.Management.Automation.PSCustomObject') {
                 foreach ($property in $Metadata.PSObject.Properties) { $metadataEntry[$property.Name] = $property.Value }
             }
             else {

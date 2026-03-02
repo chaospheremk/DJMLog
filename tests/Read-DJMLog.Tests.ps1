@@ -115,6 +115,30 @@ Describe 'Read-DJMLog' {
                 -Since (Get-Date).AddMinutes(-5) -Until (Get-Date).AddMinutes(5)
             $results.Count | Should -Be 4
         }
+
+        It '-Since boundary is inclusive' {
+            $boundaryLog = [System.IO.Path]::GetTempFileName()
+            try {
+                Write-DJMLog -Message 'Boundary' -LogPath $boundaryLog
+                $entryTime = (Read-DJMLog -LogPath $boundaryLog).UtcTime
+                (Read-DJMLog -LogPath $boundaryLog -Since $entryTime).Count | Should -Be 1
+            }
+            finally {
+                Remove-Item -LiteralPath $boundaryLog -ErrorAction SilentlyContinue
+            }
+        }
+
+        It '-Until boundary is inclusive' {
+            $boundaryLog = [System.IO.Path]::GetTempFileName()
+            try {
+                Write-DJMLog -Message 'Boundary' -LogPath $boundaryLog
+                $entryTime = (Read-DJMLog -LogPath $boundaryLog).UtcTime
+                (Read-DJMLog -LogPath $boundaryLog -Until $entryTime).Count | Should -Be 1
+            }
+            finally {
+                Remove-Item -LiteralPath $boundaryLog -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     Context '-First and -Last' {
@@ -137,6 +161,16 @@ Describe 'Read-DJMLog' {
             { Read-DJMLog -LogPath $script:LogFile -First 1 -Last 1 -WarningAction Stop } |
                 Should -Throw
         }
+
+        It '-First returns all entries when N exceeds the total count' {
+            $results = Read-DJMLog -LogPath $script:LogFile -First 100
+            $results.Count | Should -Be 4
+        }
+
+        It '-Last returns all entries when N exceeds the total count' {
+            $results = Read-DJMLog -LogPath $script:LogFile -Last 100
+            $results.Count | Should -Be 4
+        }
     }
 
     Context 'Metadata flattening' {
@@ -149,6 +183,29 @@ Describe 'Read-DJMLog' {
         It 'flattens nested metadata using underscore-separated key paths' {
             $results = Read-DJMLog -LogPath $script:LogFile -Level DEBUG
             $results[0].Detail_Sub | Should -Be 'nested'
+        }
+
+        It 'flattens three levels of nested metadata into underscore-separated key paths' {
+            $deepLog = [System.IO.Path]::GetTempFileName()
+            try {
+                Write-DJMLog -Message 'Deep nesting' -LogPath $deepLog -Metadata @{
+                    Http = @{ Response = @{ Code = 404 } }
+                }
+                $results = Read-DJMLog -LogPath $deepLog
+                $results[0].Http_Response_Code | Should -Be 404
+            }
+            finally {
+                Remove-Item -LiteralPath $deepLog -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'column set reflects only the entries in a sliced result, not all entries in the file' {
+            # The full result includes Code (entry 3) and Detail_Sub (entry 4).
+            # -First 2 returns only the two entries without metadata; those columns must be absent.
+            $results = Read-DJMLog -LogPath $script:LogFile -First 2
+            $props   = $results[0].PSObject.Properties.Name
+            $props   | Should -Not -Contain 'Code'
+            $props   | Should -Not -Contain 'Detail_Sub'
         }
     }
 
@@ -191,6 +248,87 @@ Describe 'Read-DJMLog' {
             }
             finally {
                 Remove-Item -LiteralPath $badLog -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'skips lines with an invalid timestamp with a warning and continues' {
+            $badLog = [System.IO.Path]::GetTempFileName()
+            try {
+                Write-DJMLog -Message 'Before bad timestamp' -LogPath $badLog
+                $badLine = '{"UtcTimestamp":"not-a-date","Level":"INFO","Message":"Bad","CorrelationId":"x"}'
+                Add-Content -LiteralPath $badLog -Value $badLine
+                Write-DJMLog -Message 'After bad timestamp'  -LogPath $badLog
+
+                $results = Read-DJMLog -LogPath $badLog -WarningAction SilentlyContinue
+                $results.Count | Should -Be 2
+            }
+            finally {
+                Remove-Item -LiteralPath $badLog -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'skips lines missing Level or Message with a warning and continues' {
+            $badLog = [System.IO.Path]::GetTempFileName()
+            try {
+                Write-DJMLog -Message 'Before missing fields' -LogPath $badLog
+                $badLine = '{"UtcTimestamp":"2026-01-01T00:00:00.0000000Z","CorrelationId":"x"}'
+                Add-Content -LiteralPath $badLog -Value $badLine
+                Write-DJMLog -Message 'After missing fields'  -LogPath $badLog
+
+                $results = Read-DJMLog -LogPath $badLog -WarningAction SilentlyContinue
+                $results.Count | Should -Be 2
+            }
+            finally {
+                Remove-Item -LiteralPath $badLog -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context '-Colorize' {
+
+        It 'suppresses pipeline output' {
+            $result = Read-DJMLog -LogPath $script:LogFile -Colorize
+            $result | Should -BeNullOrEmpty
+        }
+
+        It 'returns objects to the pipeline when -PassThru is also specified' {
+            $results = Read-DJMLog -LogPath $script:LogFile -Colorize -PassThru
+            $results.Count | Should -Be 4
+        }
+    }
+
+    Context '-ExportCsv' {
+
+        It 'creates a CSV file at the specified path' {
+            $csv = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-test-$([guid]::NewGuid().Guid).csv"
+            try {
+                Read-DJMLog -LogPath $script:LogFile -ExportCsv -CsvPath $csv
+                Test-Path -LiteralPath $csv | Should -BeTrue
+            }
+            finally {
+                Remove-Item -LiteralPath $csv -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'suppresses pipeline output' {
+            $csv = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-test-$([guid]::NewGuid().Guid).csv"
+            try {
+                $result = Read-DJMLog -LogPath $script:LogFile -ExportCsv -CsvPath $csv
+                $result | Should -BeNullOrEmpty
+            }
+            finally {
+                Remove-Item -LiteralPath $csv -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'returns objects to the pipeline when -PassThru is also specified' {
+            $csv = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-test-$([guid]::NewGuid().Guid).csv"
+            try {
+                $results = Read-DJMLog -LogPath $script:LogFile -ExportCsv -CsvPath $csv -PassThru
+                $results.Count | Should -Be 4
+            }
+            finally {
+                Remove-Item -LiteralPath $csv -ErrorAction SilentlyContinue
             }
         }
     }

@@ -66,6 +66,12 @@ Describe 'Set-DJMLogConfig' {
             InModuleScope DJMLog { $script:DefaultMaxSizeMB } | Should -Be 75
         }
 
+        It 'loads MutexTimeoutMs from a JSON config file' {
+            '{ "MutexTimeoutMs": 5000 }' | Set-Content -LiteralPath $script:ConfigFile
+            Set-DJMLogConfig -ConfigPath $script:ConfigFile
+            InModuleScope DJMLog { $script:DefaultMutexTimeoutMs } | Should -Be 5000
+        }
+
         It 'explicit -Path overrides config file Path' {
             '{ "Path": "C:\\Logs\\from-file.jsonl" }' | Set-Content -LiteralPath $script:ConfigFile
             Set-DJMLogConfig -ConfigPath $script:ConfigFile -Path 'C:\Logs\override.jsonl'

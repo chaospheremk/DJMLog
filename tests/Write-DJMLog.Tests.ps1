@@ -123,6 +123,12 @@ Describe 'Write-DJMLog' {
             $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
             $entry.PSObject.Properties.Name | Should -Not -Contain 'Metadata'
         }
+
+        It 'stores unsupported metadata types under Metadata.RawValue' {
+            Write-DJMLog -Message 'Raw meta' -Metadata 'plain string'
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+            $entry.Metadata.RawValue | Should -Be 'plain string'
+        }
     }
 
     Context 'Error capture' {
@@ -163,6 +169,23 @@ Describe 'Write-DJMLog' {
                 Write-DJMLog -Message 'Rotation trigger' -LogPath $log -MaxSizeMB 0.000009
                 $rotated = Get-ChildItem -Path $dir -Filter "${base}_*.jsonl"
                 $rotated | Should -Not -BeNullOrEmpty
+            }
+            finally {
+                Get-ChildItem -Path $dir -Filter "${base}*.jsonl" |
+                    Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'starts a new log file containing only the entry written after rotation' {
+            $dir  = [System.IO.Path]::GetTempPath()
+            $base = "djmlog-rot-content-$([guid]::NewGuid().Guid)"
+            $log  = Join-Path $dir "$base.jsonl"
+            try {
+                [System.IO.File]::WriteAllText($log, '1234567890')
+                Write-DJMLog -Message 'Post-rotation entry' -LogPath $log -MaxSizeMB 0.000009
+                $lines = Get-Content -LiteralPath $log
+                $lines.Count | Should -Be 1
+                ($lines | ConvertFrom-Json).Message | Should -Be 'Post-rotation entry'
             }
             finally {
                 Get-ChildItem -Path $dir -Filter "${base}*.jsonl" |

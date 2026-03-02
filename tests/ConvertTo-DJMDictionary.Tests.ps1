@@ -58,6 +58,12 @@ Describe 'ConvertTo-DJMDictionary' {
                 Should -Throw
         }
 
+        It 'throws when the specified key property does not exist on the object' {
+            $obj = [PSCustomObject]@{ Name = 'Alice' }
+            { $obj | ConvertTo-DJMDictionary -KeyProperty 'NonExistentProp' -ErrorAction Stop } |
+                Should -Throw
+        }
+
         It 'accepts input via the pipeline' {
             $result = [PSCustomObject]@{ Code = 'X1'; Label = 'Foo' } |
                 ConvertTo-DJMDictionary -KeyProperty 'Code'
