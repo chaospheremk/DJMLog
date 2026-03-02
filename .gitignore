@@ -1,0 +1,16 @@
+# Claude Code local settings — machine-specific, not for sharing
+.claude/
+
+# Log and export files generated during smoke testing
+*.jsonl
+*.csv
+
+# Pester XML output (if -OutputFile is ever used)
+testResults*.xml
+
+# Windows Explorer artefacts
+Thumbs.db
+desktop.ini
+
+# macOS artefacts
+.DS_Store
