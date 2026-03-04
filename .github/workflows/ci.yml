@@ -14,12 +14,40 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install PSScriptAnalyzer and Pester
+      - name: Cache PowerShell modules
+        id: cache-psmodules
+        uses: actions/cache@v4
+        with:
+          path: ~\Documents\PowerShell\Modules
+          key: ${{ runner.os }}-psmodules-week${{ github.run_number }}
+          restore-keys: |
+            ${{ runner.os }}-psmodules-
+
+      - name: Install or update PSScriptAnalyzer and Pester
         shell: pwsh
         run: |
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
-          Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser
+
+          foreach ($mod in @(
+              @{ Name = 'PSScriptAnalyzer'; MinVer = $null },
+              @{ Name = 'Pester';           MinVer = '5.0.0' }
+          )) {
+              $installed = Get-Module -ListAvailable -Name $mod.Name |
+                  Sort-Object Version -Descending |
+                  Select-Object -First 1
+
+              $latest = Find-Module -Name $mod.Name -ErrorAction Stop
+
+              if (-not $installed -or $installed.Version -lt $latest.Version) {
+                  Write-Host "Installing $($mod.Name) $($latest.Version) (was: $($installed.Version))..."
+                  $params = @{ Name = $mod.Name; Force = $true; Scope = 'CurrentUser' }
+                  if ($mod.MinVer) { $params['MinimumVersion'] = $mod.MinVer }
+                  Install-Module @params
+              }
+              else {
+                  Write-Host "$($mod.Name) $($installed.Version) is up to date."
+              }
+          }
 
       - name: Run PSScriptAnalyzer
         shell: pwsh
