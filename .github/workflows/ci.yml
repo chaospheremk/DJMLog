@@ -9,6 +9,10 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
 
     steps:
       - name: Checkout
@@ -66,4 +70,33 @@ jobs:
           $config.Run.Path = './tests'
           $config.Run.Exit = $true
           $config.Output.Verbosity = 'Detailed'
+
+          # Test result export (JUnit XML for GitHub summary)
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputFormat = 'JUnitXml'
+          $config.TestResult.OutputPath = './testResults.xml'
+
+          # Code coverage (JaCoCo XML, informational only)
+          $config.CodeCoverage.Enabled = $true
+          $config.CodeCoverage.OutputFormat = 'JaCoCo'
+          $config.CodeCoverage.OutputPath = './coverage.xml'
+          $config.CodeCoverage.Path = @('./Public', './Private')
+
           Invoke-Pester -Configuration $config
+
+      - name: Publish test results
+        if: always()
+        uses: dorny/test-reporter@v2
+        with:
+          name: Pester Tests
+          path: testResults.xml
+          reporter: java-junit
+
+      - name: Upload coverage and test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: |
+            coverage.xml
+            testResults.xml
