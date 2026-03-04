@@ -2,13 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
   pull_request:
     branches: [ main ]
 
 jobs:
   lint-and-test:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -18,7 +18,7 @@ jobs:
         id: cache-psmodules
         uses: actions/cache@v4
         with:
-          path: ~\Documents\PowerShell\Modules
+          path: ~/.local/share/powershell/Modules
           key: ${{ runner.os }}-psmodules-week${{ github.run_number }}
           restore-keys: |
             ${{ runner.os }}-psmodules-
