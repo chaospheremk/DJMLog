@@ -491,6 +491,32 @@ function Write-DJMLog {
             if ($mutexAcquired) { $script:LogMutex.ReleaseMutex() }
         }
 
+        # Buffer for Log Analytics (only after successful file write)
+        if ($mutexAcquired -and $script:LogAnalyticsEnabled) {
+            $bufferEntry = @{
+                UtcTimestamp  = $logEntry['UtcTimestamp']
+                Level         = $logEntry['Level']
+                Message       = $logEntry['Message']
+                CorrelationId = $logEntry['CorrelationId']
+            }
+            if ($logEntry.ContainsKey('Metadata')) {
+                $bufferEntry['Metadata'] = $logEntry['Metadata']
+            }
+
+            # Drop oldest if at capacity
+            if ($script:LogBuffer.Count -ge $script:MaxBufferSize) {
+                $script:LogBuffer.RemoveAt(0)
+                Write-Warning "Write-DJMLog: buffer full ($($script:MaxBufferSize)). Oldest entry dropped."
+            }
+
+            $script:LogBuffer.Add($bufferEntry)
+
+            # Auto-flush when threshold reached
+            if ($script:LogBuffer.Count -ge $script:FlushThreshold -and -not $script:AutoFlushDisabled) {
+                Send-DJMLogBuffer
+            }
+        }
+
         if ($PassThru) {
             ConvertTo-DJMOrderedPSObject -Dictionary $logEntry
         }

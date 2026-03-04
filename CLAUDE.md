@@ -29,22 +29,26 @@ PowerShell 7+ is required. There is no test suite, build system, or linter confi
 
 ## Architecture
 
-Five exported functions in a single module file (`DJMLog.psm1`):
+Six exported functions in a single module file (`DJMLog.psm1`):
 
 | Function | Role |
 |---|---|
-| `Set-DJMLogConfig` | Sets module-level defaults (path, max size, mutex timeout). Accepts direct params or a JSON config file. |
-| `Write-DJMLog` | Appends a JSONL entry atomically using a named OS mutex (`DJMLog_WriteAccess`). Rotates the file when `MaxSizeMB` is exceeded. |
+| `Set-DJMLogConfig` | Sets module-level defaults (path, max size, mutex timeout, Log Analytics integration). Accepts direct params or a JSON config file. |
+| `Write-DJMLog` | Appends a JSONL entry atomically using a named OS mutex (`DJMLog_WriteAccess`). Rotates the file when `MaxSizeMB` is exceeded. Optionally buffers entries for Azure Log Analytics. |
 | `Read-DJMLog` | Streams a JSONL file line-by-line, filters by level/correlation/time/text, flattens nested metadata, and normalises all output objects to identical property sets. |
+| `Send-DJMLogBuffer` | Flushes the in-memory log buffer to Azure Log Analytics via the Logs Ingestion API (DCR-based). Chunks batches to 500 KB. |
 | `ConvertTo-DJMDictionary` | Converts a PSObject list or hashtable to `Dictionary[string, PSObject]` with lowercase keys. |
 | `ConvertTo-DJMOrderedPSObject` | Converts an IDictionary to a PSCustomObject preserving key order. |
 
-One private helper: `Expand-MetadataValue` — recursive flattener for nested metadata objects (underscore-separated key paths, e.g. `Error_ScriptName`).
+Two private helpers:
+- `Expand-MetadataValue` — recursive flattener for nested metadata objects (underscore-separated key paths, e.g. `Error_ScriptName`).
+- `Get-DJMBearerToken` — OAuth2 client_credentials token acquisition + caching (cert JWT assertion or client secret). Cloud-aware (Commercial, GCCHigh, DoD).
 
 ### Key design points
 
 - **Parallel safety**: `Write-DJMLog` acquires a named mutex before each append so multiple runspaces can write without file-lock contention. `MutexTimeoutMs` (default 2000 ms) controls how long to wait.
 - **Log rotation**: when the file exceeds `MaxSizeMB`, it is renamed with a UTC timestamp suffix before a new file is started.
+- **Azure Log Analytics integration**: optional buffered ingestion via the Logs Ingestion API (DCR-based REST). Entries are buffered in-memory and flushed in batches. Supports Commercial, GCCHigh, and DoD cloud environments (default GCCHigh). Auth: certificate JWT assertion, client secret, or pre-acquired bearer token. Circuit breaker disables auto-flush after consecutive failures.
 - **Metadata flattening**: `Read-DJMLog` recursively promotes nested metadata to top-level columns so output can be piped to `Export-Csv` or `Out-GridView` cleanly.
 - **Column normalisation**: every object returned by `Read-DJMLog` carries the same property set (the union of all columns seen) so that `Format-Table` and CSV export produce consistent columns even when entries have different metadata shapes.
 
@@ -76,7 +80,18 @@ One private helper: `Expand-MetadataValue` — recursive flattener for nested me
 {
     "Path": "C:\\Logs\\automation.jsonl",
     "MaxSizeMB": 50,
-    "MutexTimeoutMs": 2000
+    "MutexTimeoutMs": 2000,
+    "LogAnalyticsEnabled": true,
+    "CloudEnvironment": "GCCHigh",
+    "DcrEndpointUri": "https://my-dce.eastus.ingest.monitor.azure.us",
+    "DcrImmutableId": "dcr-abc123",
+    "DcrStreamName": "Custom-MyTable_CL",
+    "TenantId": "00000000-0000-0000-0000-000000000000",
+    "AppId": "00000000-0000-0000-0000-000000000000",
+    "CertificateSubject": "CN=DJMLog-Auth",
+    "FlushThreshold": 100,
+    "MaxBufferSize": 5000,
+    "MaxFlushRetries": 3
 }
 ```
 
@@ -92,14 +107,17 @@ DJMLog/
 │   ├── Set-DJMLogConfig.ps1
 │   ├── Write-DJMLog.ps1
 │   ├── Read-DJMLog.ps1
+│   ├── Send-DJMLogBuffer.ps1
 │   ├── ConvertTo-DJMDictionary.ps1
 │   └── ConvertTo-DJMOrderedPSObject.ps1
 ├── Private/                             # Internal helpers
-│   └── Expand-MetadataValue.ps1
+│   ├── Expand-MetadataValue.ps1
+│   └── Get-DJMBearerToken.ps1
 ├── tests/                               # Pester 5 test suite
 │   ├── Set-DJMLogConfig.Tests.ps1
 │   ├── Write-DJMLog.Tests.ps1
 │   ├── Read-DJMLog.Tests.ps1
+│   ├── Send-DJMLogBuffer.Tests.ps1
 │   ├── ConvertTo-DJMDictionary.Tests.ps1
 │   └── ConvertTo-DJMOrderedPSObject.Tests.ps1
 ├── PSScriptAnalyzerSettings.psd1        # Linter config

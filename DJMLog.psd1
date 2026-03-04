@@ -10,6 +10,7 @@
         'Set-DJMLogConfig'
         'Write-DJMLog'
         'Read-DJMLog'
+        'Send-DJMLogBuffer'
         'ConvertTo-DJMDictionary'
         'ConvertTo-DJMOrderedPSObject'
     )
