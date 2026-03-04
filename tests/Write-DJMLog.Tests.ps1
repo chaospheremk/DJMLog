@@ -18,6 +18,12 @@ Describe 'Write-DJMLog' {
             $script:DefaultRetainDays       = 0
             $script:DefaultRetainFiles      = 0
             $script:DefaultIncludeCaller    = $true
+            $script:LogAnalyticsEnabled     = $false
+            $script:LogBuffer               = [System.Collections.Generic.List[hashtable]]::new()
+            $script:FlushFailureCount       = 0
+            $script:AutoFlushDisabled       = $false
+            $script:FlushThreshold          = 100
+            $script:MaxBufferSize           = 5000
         }
     }
 
@@ -415,6 +421,76 @@ Describe 'Write-DJMLog' {
             $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
             $entry.Metadata.JobId   | Should -Be 99
             $entry.Metadata.Caller  | Should -Not -BeNullOrEmpty
+        }
+    }
+
+    Context 'Log Analytics buffer' {
+
+        BeforeEach {
+            InModuleScope DJMLog {
+                $script:LogAnalyticsEnabled = $true
+                $script:FlushThreshold      = 100
+                $script:MaxBufferSize       = 5000
+                $script:AutoFlushDisabled   = $false
+                $script:LogBuffer           = [System.Collections.Generic.List[hashtable]]::new()
+            }
+        }
+
+        It 'adds entry to buffer when LogAnalyticsEnabled is true' {
+            Write-DJMLog -Message 'Buffer me'
+            InModuleScope DJMLog { $script:LogBuffer.Count } | Should -Be 1
+        }
+
+        It 'does not add entry to buffer when LogAnalyticsEnabled is false' {
+            InModuleScope DJMLog { $script:LogAnalyticsEnabled = $false }
+            Write-DJMLog -Message 'No buffer'
+            InModuleScope DJMLog { $script:LogBuffer.Count } | Should -Be 0
+        }
+
+        It 'buffer entry contains correct fields' {
+            Write-DJMLog -Message 'Field check' -Level WARN -CorrelationId 'test-cid'
+            $entry = InModuleScope DJMLog { $script:LogBuffer[0] }
+            $entry['Message']       | Should -Be 'Field check'
+            $entry['Level']         | Should -Be 'WARN'
+            $entry['CorrelationId'] | Should -Be 'test-cid'
+            $entry['UtcTimestamp']  | Should -Not -BeNullOrEmpty
+        }
+
+        It 'drops oldest entry when buffer reaches MaxBufferSize' {
+            InModuleScope DJMLog { $script:MaxBufferSize = 3 }
+            Write-DJMLog -Message 'First'
+            Write-DJMLog -Message 'Second'
+            Write-DJMLog -Message 'Third'
+            Write-DJMLog -Message 'Fourth' -WarningAction SilentlyContinue
+            $count = InModuleScope DJMLog { $script:LogBuffer.Count }
+            $count | Should -Be 3
+            $firstMsg = InModuleScope DJMLog { $script:LogBuffer[0]['Message'] }
+            $firstMsg | Should -Be 'Second'
+        }
+
+        It 'triggers auto-flush when buffer reaches FlushThreshold' {
+            Mock Send-DJMLogBuffer -ModuleName DJMLog { }
+            InModuleScope DJMLog { $script:FlushThreshold = 2 }
+            Write-DJMLog -Message 'One'
+            Write-DJMLog -Message 'Two'
+            Should -Invoke Send-DJMLogBuffer -ModuleName DJMLog -Times 1 -Exactly
+        }
+
+        It 'does not auto-flush when AutoFlushDisabled is true' {
+            Mock Send-DJMLogBuffer -ModuleName DJMLog { }
+            InModuleScope DJMLog {
+                $script:FlushThreshold    = 2
+                $script:AutoFlushDisabled = $true
+            }
+            Write-DJMLog -Message 'One'
+            Write-DJMLog -Message 'Two'
+            Should -Invoke Send-DJMLogBuffer -ModuleName DJMLog -Times 0 -Exactly
+        }
+
+        It 'includes Metadata in buffer entry when provided' {
+            Write-DJMLog -Message 'With meta' -Metadata @{ JobId = 42 }
+            $hasMeta = InModuleScope DJMLog { $script:LogBuffer[0].ContainsKey('Metadata') }
+            $hasMeta | Should -Be $true
         }
     }
 }

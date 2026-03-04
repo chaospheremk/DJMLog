@@ -15,6 +15,22 @@ Describe 'Set-DJMLogConfig' {
             $script:DefaultRetainDays       = 0
             $script:DefaultRetainFiles      = 0
             $script:DefaultIncludeCaller    = $true
+            $script:LogAnalyticsEnabled     = $false
+            $script:CloudEnvironment        = 'GCCHigh'
+            $script:DcrEndpointUri          = $null
+            $script:DcrImmutableId          = $null
+            $script:DcrStreamName           = $null
+            $script:TenantId                = $null
+            $script:AppId                   = $null
+            $script:AppSecret               = $null
+            $script:CertificateSubject      = $null
+            $script:CertificateThumbprint   = $null
+            $script:BearerTokenExternal     = $null
+            $script:FlushThreshold          = 100
+            $script:MaxBufferSize           = 5000
+            $script:MaxFlushRetries         = 3
+            $script:FlushFailureCount       = 0
+            $script:AutoFlushDisabled       = $false
         }
     }
 
@@ -196,6 +212,172 @@ Describe 'Set-DJMLogConfig' {
             'not valid json {{ ' | Set-Content -LiteralPath $script:ConfigFile
             { Set-DJMLogConfig -ConfigPath $script:ConfigFile -WarningAction Stop } |
                 Should -Throw
+        }
+    }
+
+    Context 'Log Analytics parameters' {
+
+        It 'sets LogAnalyticsEnabled' {
+            Set-DJMLogConfig -LogAnalyticsEnabled $true
+            InModuleScope DJMLog { $script:LogAnalyticsEnabled } | Should -Be $true
+        }
+
+        It 'sets CloudEnvironment' {
+            Set-DJMLogConfig -CloudEnvironment Commercial
+            InModuleScope DJMLog { $script:CloudEnvironment } | Should -Be 'Commercial'
+        }
+
+        It 'accepts all valid CloudEnvironment values' {
+            foreach ($env in @('Commercial', 'GCCHigh', 'DoD')) {
+                Set-DJMLogConfig -CloudEnvironment $env
+                InModuleScope DJMLog { $script:CloudEnvironment } | Should -Be $env
+            }
+        }
+
+        It 'sets DcrEndpointUri' {
+            Set-DJMLogConfig -DcrEndpointUri 'https://fake.ingest.monitor.azure.us'
+            InModuleScope DJMLog { $script:DcrEndpointUri } | Should -Be 'https://fake.ingest.monitor.azure.us'
+        }
+
+        It 'sets DcrImmutableId' {
+            Set-DJMLogConfig -DcrImmutableId 'dcr-test123'
+            InModuleScope DJMLog { $script:DcrImmutableId } | Should -Be 'dcr-test123'
+        }
+
+        It 'sets DcrStreamName' {
+            Set-DJMLogConfig -DcrStreamName 'Custom-MyLog_CL'
+            InModuleScope DJMLog { $script:DcrStreamName } | Should -Be 'Custom-MyLog_CL'
+        }
+
+        It 'sets TenantId' {
+            Set-DJMLogConfig -TenantId 'tenant-abc'
+            InModuleScope DJMLog { $script:TenantId } | Should -Be 'tenant-abc'
+        }
+
+        It 'sets AppId' {
+            Set-DJMLogConfig -AppId 'app-xyz'
+            InModuleScope DJMLog { $script:AppId } | Should -Be 'app-xyz'
+        }
+
+        It 'sets AppSecret as string' {
+            Set-DJMLogConfig -AppSecret 'my-secret'
+            InModuleScope DJMLog { $script:AppSecret } | Should -Be 'my-secret'
+        }
+
+        It 'sets AppSecret as SecureString' {
+            # Plaintext conversion is intentional in test context
+            $secure = ConvertTo-SecureString 'secret-value' -AsPlainText -Force  # PSScriptAnalyzer: test-only
+            Set-DJMLogConfig -AppSecret $secure
+            InModuleScope DJMLog { $script:AppSecret -is [System.Security.SecureString] } | Should -Be $true
+        }
+
+        It 'sets CertificateSubject' {
+            Set-DJMLogConfig -CertificateSubject 'CN=DJMLog-Auth'
+            InModuleScope DJMLog { $script:CertificateSubject } | Should -Be 'CN=DJMLog-Auth'
+        }
+
+        It 'sets CertificateThumbprint' {
+            Set-DJMLogConfig -CertificateThumbprint 'AABB1122'
+            InModuleScope DJMLog { $script:CertificateThumbprint } | Should -Be 'AABB1122'
+        }
+
+        It 'sets BearerToken to BearerTokenExternal' {
+            Set-DJMLogConfig -BearerToken 'eyJ-fake-token'
+            InModuleScope DJMLog { $script:BearerTokenExternal } | Should -Be 'eyJ-fake-token'
+        }
+
+        It 'sets FlushThreshold' {
+            Set-DJMLogConfig -FlushThreshold 50
+            InModuleScope DJMLog { $script:FlushThreshold } | Should -Be 50
+        }
+
+        It 'sets MaxBufferSize' {
+            Set-DJMLogConfig -MaxBufferSize 10000
+            InModuleScope DJMLog { $script:MaxBufferSize } | Should -Be 10000
+        }
+
+        It 'sets MaxFlushRetries' {
+            Set-DJMLogConfig -MaxFlushRetries 5
+            InModuleScope DJMLog { $script:MaxFlushRetries } | Should -Be 5
+        }
+
+        It 'resets circuit breaker when any LA param is set' {
+            InModuleScope DJMLog {
+                $script:FlushFailureCount = 5
+                $script:AutoFlushDisabled = $true
+            }
+            Set-DJMLogConfig -FlushThreshold 200
+            InModuleScope DJMLog { $script:FlushFailureCount } | Should -Be 0
+            InModuleScope DJMLog { $script:AutoFlushDisabled } | Should -Be $false
+        }
+
+        It 'does not reset circuit breaker when only non-LA params are set' {
+            InModuleScope DJMLog {
+                $script:FlushFailureCount = 3
+                $script:AutoFlushDisabled = $true
+            }
+            Set-DJMLogConfig -Path 'C:\Logs\test.jsonl'
+            InModuleScope DJMLog { $script:FlushFailureCount } | Should -Be 3
+            InModuleScope DJMLog { $script:AutoFlushDisabled } | Should -Be $true
+        }
+    }
+
+    Context 'Log Analytics config file loading' {
+
+        BeforeAll {
+            $script:LAConfigFile = [System.IO.Path]::GetTempFileName()
+        }
+
+        AfterAll {
+            Remove-Item -LiteralPath $script:LAConfigFile -ErrorAction SilentlyContinue
+        }
+
+        It 'loads LogAnalyticsEnabled from config file' {
+            '{ "LogAnalyticsEnabled": true }' | Set-Content -LiteralPath $script:LAConfigFile
+            Set-DJMLogConfig -ConfigPath $script:LAConfigFile
+            InModuleScope DJMLog { $script:LogAnalyticsEnabled } | Should -Be $true
+        }
+
+        It 'loads CloudEnvironment from config file' {
+            '{ "CloudEnvironment": "DoD" }' | Set-Content -LiteralPath $script:LAConfigFile
+            Set-DJMLogConfig -ConfigPath $script:LAConfigFile
+            InModuleScope DJMLog { $script:CloudEnvironment } | Should -Be 'DoD'
+        }
+
+        It 'loads DcrEndpointUri from config file' {
+            '{ "DcrEndpointUri": "https://from-file.ingest.monitor.azure.us" }' | Set-Content -LiteralPath $script:LAConfigFile
+            Set-DJMLogConfig -ConfigPath $script:LAConfigFile
+            InModuleScope DJMLog { $script:DcrEndpointUri } | Should -Be 'https://from-file.ingest.monitor.azure.us'
+        }
+
+        It 'loads FlushThreshold from config file' {
+            '{ "FlushThreshold": 200 }' | Set-Content -LiteralPath $script:LAConfigFile
+            Set-DJMLogConfig -ConfigPath $script:LAConfigFile
+            InModuleScope DJMLog { $script:FlushThreshold } | Should -Be 200
+        }
+
+        It 'loads MaxBufferSize from config file' {
+            '{ "MaxBufferSize": 8000 }' | Set-Content -LiteralPath $script:LAConfigFile
+            Set-DJMLogConfig -ConfigPath $script:LAConfigFile
+            InModuleScope DJMLog { $script:MaxBufferSize } | Should -Be 8000
+        }
+
+        It 'loads MaxFlushRetries from config file' {
+            '{ "MaxFlushRetries": 10 }' | Set-Content -LiteralPath $script:LAConfigFile
+            Set-DJMLogConfig -ConfigPath $script:LAConfigFile
+            InModuleScope DJMLog { $script:MaxFlushRetries } | Should -Be 10
+        }
+
+        It 'explicit -CloudEnvironment overrides config file' {
+            '{ "CloudEnvironment": "DoD" }' | Set-Content -LiteralPath $script:LAConfigFile
+            Set-DJMLogConfig -ConfigPath $script:LAConfigFile -CloudEnvironment Commercial
+            InModuleScope DJMLog { $script:CloudEnvironment } | Should -Be 'Commercial'
+        }
+
+        It 'explicit -BearerToken overrides config file' {
+            '{ "BearerToken": "file-token" }' | Set-Content -LiteralPath $script:LAConfigFile
+            Set-DJMLogConfig -ConfigPath $script:LAConfigFile -BearerToken 'param-token'
+            InModuleScope DJMLog { $script:BearerTokenExternal } | Should -Be 'param-token'
         }
     }
 }

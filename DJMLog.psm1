@@ -24,6 +24,27 @@ $script:DefaultRetainDays        = 0         # 0 = keep all rotated files indefi
 $script:DefaultRetainFiles       = 0         # 0 = keep all rotated files indefinitely
 $script:DefaultIncludeCaller     = $true     # capture caller script/line automatically
 
+# Azure Log Analytics integration
+$script:LogAnalyticsEnabled     = $false
+$script:CloudEnvironment        = 'GCCHigh'   # Commercial | GCCHigh | DoD
+$script:DcrEndpointUri          = $null
+$script:DcrImmutableId          = $null
+$script:DcrStreamName           = $null
+$script:TenantId                = $null
+$script:AppId                   = $null
+$script:AppSecret               = $null
+$script:CertificateSubject      = $null        # e.g. 'CN=DJMLog-Auth'
+$script:CertificateThumbprint   = $null        # pin to specific cert
+$script:FlushThreshold          = 100
+$script:MaxBufferSize           = 5000
+$script:MaxFlushRetries         = 3
+$script:LogBuffer               = [System.Collections.Generic.List[hashtable]]::new()
+$script:BearerToken             = $null
+$script:BearerTokenExternal     = $null        # user-supplied token via -BearerToken
+$script:TokenExpiry             = [datetime]::MinValue
+$script:FlushFailureCount       = 0
+$script:AutoFlushDisabled       = $false
+
 # Named mutex shared across all runspaces on this machine via the OS kernel.
 # Serialises AppendAllText calls so parallel writers never contend on the file.
 $script:LogMutex = [System.Threading.Mutex]::new($false, 'DJMLog_WriteAccess')

@@ -23,5 +23,8 @@
         # Read-DJMLog legitimately returns List[string] (-Raw) or List[PSObject].
         # Declaring both in OutputType adds noise without value.
         'PSUseOutputTypeCorrectly'
+
+        # Test files use ConvertTo-SecureString -AsPlainText to validate SecureString handling.
+        'PSAvoidUsingConvertToSecureStringWithPlainText'
     )
 }
