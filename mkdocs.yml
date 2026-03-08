@@ -3,6 +3,13 @@ docs_dir: docs
 
 theme:
   name: material
+  palette:
+    scheme: slate
+    primary: indigo
+    accent: teal
+  font:
+    text: Roboto
+    code: Roboto Mono
   features:
     - navigation.sections
     - navigation.top
