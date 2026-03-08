@@ -18,27 +18,27 @@ Structured JSONL logging module for PowerShell 7+ automation scripts.
 
 ## DJMLog Cmdlets
 
-### [ConvertTo-DJMDictionary](commands/ConvertTo-DJMDictionary.md)
+### [ConvertTo-DJMDictionary](ConvertTo-DJMDictionary.md)
 
 Converts PSObjects or a hashtable into a Dictionary[string, PSObject].
 
-### [ConvertTo-DJMOrderedPSObject](commands/ConvertTo-DJMOrderedPSObject.md)
+### [ConvertTo-DJMOrderedPSObject](ConvertTo-DJMOrderedPSObject.md)
 
 Converts an IDictionary into a PSCustomObject with stable property order.
 
-### [Read-DJMLog](commands/Read-DJMLog.md)
+### [Read-DJMLog](Read-DJMLog.md)
 
 Reads and filters a JSONL log file produced by Write-DJMLog.
 
-### [Send-DJMLogBuffer](commands/Send-DJMLogBuffer.md)
+### [Send-DJMLogBuffer](Send-DJMLogBuffer.md)
 
 Flushes the in-memory log buffer to Azure Log Analytics via the Logs Ingestion API.
 
-### [Set-DJMLogConfig](commands/Set-DJMLogConfig.md)
+### [Set-DJMLogConfig](Set-DJMLogConfig.md)
 
 Configures module-level defaults for Write-DJMLog, Read-DJMLog, and Send-DJMLogBuffer.
 
-### [Write-DJMLog](commands/Write-DJMLog.md)
+### [Write-DJMLog](Write-DJMLog.md)
 
 Appends a structured entry to a JSONL log file.
 
