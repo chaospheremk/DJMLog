@@ -25,8 +25,7 @@ Send-DJMLogBuffer [-Force] [<CommonParameters>]
 
 ## ALIASES
 
-This cmdlet has the following aliases,
-  {{Insert list of aliases}}
+None.
 
 ## DESCRIPTION
 
@@ -54,13 +53,17 @@ remain buffered for the next attempt.
 
 ### EXAMPLE 1
 
+```powershell
 # Manually flush the buffer
 Send-DJMLogBuffer
+```
 
 ### EXAMPLE 2
 
+```powershell
 # Force flush after circuit breaker tripped
 Send-DJMLogBuffer -Force
+```
 
 ## PARAMETERS
 
@@ -95,6 +98,8 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 [about_CommonParameters](https://go.microsoft.com/fwlink/?LinkID=113216).
 
 ## INPUTS
+
+None. This cmdlet does not accept pipeline input.
 
 ## OUTPUTS
 

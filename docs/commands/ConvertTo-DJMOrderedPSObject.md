@@ -25,8 +25,7 @@ ConvertTo-DJMOrderedPSObject [-Dictionary] <IDictionary> [<CommonParameters>]
 
 ## ALIASES
 
-This cmdlet has the following aliases,
-  {{Insert list of aliases}}
+None.
 
 ## DESCRIPTION
 
@@ -43,10 +42,12 @@ OrderedDictionary, and Dictionary[string, PSObject].
 
 ### EXAMPLE 1
 
+```powershell
 # Convert a generic dictionary returned by ConvertTo-DJMDictionary
 $dict   = ConvertTo-DJMDictionary -Hashtable @{ Name = 'Prod'; Region = 'UKSouth' }
 $object = ConvertTo-DJMOrderedPSObject -Dictionary $dict
 $object | Format-List
+```
 
 ## PARAMETERS
 
@@ -79,6 +80,8 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 [about_CommonParameters](https://go.microsoft.com/fwlink/?LinkID=113216).
 
 ## INPUTS
+
+None. This cmdlet does not accept pipeline input.
 
 ## OUTPUTS
 

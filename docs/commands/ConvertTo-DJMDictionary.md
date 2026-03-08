@@ -31,8 +31,7 @@ ConvertTo-DJMDictionary -Hashtable <hashtable> [<CommonParameters>]
 
 ## ALIASES
 
-This cmdlet has the following aliases,
-  {{Insert list of aliases}}
+None.
 
 ## DESCRIPTION
 
@@ -54,18 +53,22 @@ Duplicate keys emit a
 
 ### EXAMPLE 1
 
+```powershell
 # Build a lookup from an AD query
 $userIndex = Get-ADUser -Filter * -Properties Department |
     ConvertTo-DJMDictionary -KeyProperty 'SamAccountName'
 $userIndex['jsmith'].Department
+```
 
 ### EXAMPLE 2
 
+```powershell
 # Convert a hashtable of config values
 $config = ConvertTo-DJMDictionary -Hashtable @{
     Environment = 'Production'
     Region      = 'UKSouth'
 }
+```
 
 ## PARAMETERS
 
