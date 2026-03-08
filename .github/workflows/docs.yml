@@ -25,9 +25,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install PowerShell
-        uses: actions/setup-powershell@v1
-
       - name: Install PlatyPS
         shell: pwsh
         run: Install-PSResource -Name Microsoft.PowerShell.PlatyPS -TrustRepository
