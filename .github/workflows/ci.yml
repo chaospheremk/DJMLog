@@ -3,8 +3,24 @@ name: CI
 on:
   push:
     branches: [ main, dev ]
+    paths:
+      - 'Public/**'
+      - 'Private/**'
+      - 'tests/**'
+      - 'DJMLog.psd1'
+      - 'DJMLog.psm1'
+      - 'PSScriptAnalyzerSettings.psd1'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'Public/**'
+      - 'Private/**'
+      - 'tests/**'
+      - 'DJMLog.psd1'
+      - 'DJMLog.psm1'
+      - 'PSScriptAnalyzerSettings.psd1'
+      - '.github/workflows/ci.yml'
 
 jobs:
   lint-and-test:

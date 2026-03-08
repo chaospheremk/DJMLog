@@ -4,6 +4,13 @@ on:
   push:
     branches:
       - main
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'requirements.txt'
+      - 'DJMLog.psd1'
+      - 'Public/**'
+      - '.github/workflows/docs.yml'
 
 permissions:
   contents: read
