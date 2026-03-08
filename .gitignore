@@ -14,3 +14,12 @@ desktop.ini
 
 # macOS artefacts
 .DS_Store
+
+# PlatyPS backup files
+*.bak
+
+# PlatyPS MAML output (generated in CI only)
+en-US/
+
+# MkDocs build output (generated in CI only)
+site/
