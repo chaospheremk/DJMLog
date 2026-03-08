@@ -29,25 +29,16 @@ None.
 
 ## DESCRIPTION
 
-Sends buffered log entries to the configured Data Collection Rule (DCR) endpoint
-in chunked batches of up to 500 KB each.
-Each record's UtcTimestamp is mapped to
-the TimeGenerated field so timestamps remain accurate regardless of when the batch
-is sent.
+Sends buffered log entries to the configured Data Collection Rule (DCR) endpoint in chunked batches of up to 500 KB each. Each record's UtcTimestamp is mapped to the TimeGenerated field so timestamps remain accurate regardless of when the batch is sent.
 
 Preconditions:
-  - LogAnalyticsEnabled must be $true (via Set-DJMLogConfig)
-  - DcrEndpointUri, DcrImmutableId, and DcrStreamName must be configured
-  - The buffer must contain at least one entry
-  - Auto-flush must not be disabled (circuit breaker) unless -Force is used
 
-On success, sent entries are removed from the buffer, the failure count is reset,
-and auto-flush is re-enabled.
-On failure, the failure count is incremented and
-auto-flush is disabled when MaxFlushRetries is reached.
-The function breaks on the
-first batch failure so partially sent entries are removed while unsent entries
-remain buffered for the next attempt.
+- LogAnalyticsEnabled must be `$true` (via Set-DJMLogConfig)
+- DcrEndpointUri, DcrImmutableId, and DcrStreamName must be configured
+- The buffer must contain at least one entry
+- Auto-flush must not be disabled (circuit breaker) unless -Force is used
+
+On success, sent entries are removed from the buffer, the failure count is reset, and auto-flush is re-enabled. On failure, the failure count is incremented and auto-flush is disabled when MaxFlushRetries is reached. The function breaks on the first batch failure so partially sent entries are removed while unsent entries remain buffered for the next attempt.
 
 ## EXAMPLES
 

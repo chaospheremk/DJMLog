@@ -36,51 +36,44 @@ None.
 
 ## DESCRIPTION
 
-Sets module-scoped defaults so that Write-DJMLog and Read-DJMLog callers
-do not need to supply -LogPath, -MaxSizeMB, or -MutexTimeoutMs on every
-call.
-Also configures Azure Log Analytics integration settings for
-Send-DJMLogBuffer.
-Settings can be provided directly as parameters, loaded
-from a JSON config file via -ConfigPath, or both.
+Sets module-scoped defaults so that Write-DJMLog and Read-DJMLog callers do not need to supply -LogPath, -MaxSizeMB, or -MutexTimeoutMs on every call. Also configures Azure Log Analytics integration settings for Send-DJMLogBuffer. Settings can be provided directly as parameters, loaded from a JSON config file via -ConfigPath, or both.
 
 Precedence when both -ConfigPath and explicit parameters are supplied:
-    Explicit parameter > config file value > existing module default
 
-Only properties present in the config file are applied.
-Missing properties
-leave the corresponding module default unchanged.
-The same rule applies to
-explicit parameters -- omitting a parameter does not reset its module default.
+> Explicit parameter > config file value > existing module default
 
-When any Log Analytics parameter is set, the circuit breaker state is reset
-(FlushFailureCount = 0, AutoFlushDisabled = $false).
+Only properties present in the config file are applied. Missing properties leave the corresponding module default unchanged. The same rule applies to explicit parameters — omitting a parameter does not reset its module default.
+
+When any Log Analytics parameter is set, the circuit breaker state is reset (FlushFailureCount = 0, AutoFlushDisabled = $false).
 
 Config file schema (all properties optional):
-    {
-        "Path":                  "C:\\Logs\\automation.jsonl",
-        "MaxSizeMB":            50,
-        "MutexTimeoutMs":       2000,
-        "MinLevel":             "INFO",
-        "RotationSchedule":     "Daily",
-        "RetainDays":           30,
-        "RetainFiles":          10,
-        "IncludeCaller":        true,
-        "LogAnalyticsEnabled":  true,
-        "CloudEnvironment":     "GCCHigh",
-        "DcrEndpointUri":       "https://my-dce.eastus.ingest.monitor.azure.us",
-        "DcrImmutableId":       "dcr-abc123",
-        "DcrStreamName":        "Custom-MyTable_CL",
-        "TenantId":             "00000000-0000-0000-0000-000000000000",
-        "AppId":                "00000000-0000-0000-0000-000000000000",
-        "AppSecret":            "secret",
-        "CertificateSubject":   "CN=DJMLog-Auth",
-        "CertificateThumbprint":"AABBCC...",
-        "BearerToken":          "eyJ...",
-        "FlushThreshold":       100,
-        "MaxBufferSize":        5000,
-        "MaxFlushRetries":      3
-    }
+
+```json
+{
+    "Path":                  "C:\\Logs\\automation.jsonl",
+    "MaxSizeMB":            50,
+    "MutexTimeoutMs":       2000,
+    "MinLevel":             "INFO",
+    "RotationSchedule":     "Daily",
+    "RetainDays":           30,
+    "RetainFiles":          10,
+    "IncludeCaller":        true,
+    "LogAnalyticsEnabled":  true,
+    "CloudEnvironment":     "GCCHigh",
+    "DcrEndpointUri":       "https://my-dce.eastus.ingest.monitor.azure.us",
+    "DcrImmutableId":       "dcr-abc123",
+    "DcrStreamName":        "Custom-MyTable_CL",
+    "TenantId":             "00000000-0000-0000-0000-000000000000",
+    "AppId":                "00000000-0000-0000-0000-000000000000",
+    "AppSecret":            "secret",
+    "CertificateSubject":   "CN=DJMLog-Auth",
+    "CertificateThumbprint":"AABBCC...",
+    "BearerToken":          "eyJ...",
+    "FlushThreshold":       100,
+    "MaxBufferSize":        5000,
+    "MaxFlushRetries":      3
+}
+```
 
 Unknown properties in the config file are silently ignored.
 
