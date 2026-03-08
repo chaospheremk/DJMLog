@@ -2,24 +2,56 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
   pull_request:
     branches: [ main ]
 
 jobs:
   lint-and-test:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      checks: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install PSScriptAnalyzer and Pester
+      - name: Cache PowerShell modules
+        id: cache-psmodules
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/powershell/Modules
+          key: ${{ runner.os }}-psmodules-week${{ github.run_number }}
+          restore-keys: |
+            ${{ runner.os }}-psmodules-
+
+      - name: Install or update PSScriptAnalyzer and Pester
         shell: pwsh
         run: |
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
-          Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -Scope CurrentUser
+
+          foreach ($mod in @(
+              @{ Name = 'PSScriptAnalyzer'; MinVer = $null },
+              @{ Name = 'Pester';           MinVer = '5.0.0' }
+          )) {
+              $installed = Get-Module -ListAvailable -Name $mod.Name |
+                  Sort-Object Version -Descending |
+                  Select-Object -First 1
+
+              $latest = Find-Module -Name $mod.Name -ErrorAction Stop
+
+              if (-not $installed -or $installed.Version -lt $latest.Version) {
+                  Write-Host "Installing $($mod.Name) $($latest.Version) (was: $($installed.Version))..."
+                  $params = @{ Name = $mod.Name; Force = $true; Scope = 'CurrentUser' }
+                  if ($mod.MinVer) { $params['MinimumVersion'] = $mod.MinVer }
+                  Install-Module @params
+              }
+              else {
+                  Write-Host "$($mod.Name) $($installed.Version) is up to date."
+              }
+          }
 
       - name: Run PSScriptAnalyzer
         shell: pwsh
@@ -38,4 +70,33 @@ jobs:
           $config.Run.Path = './tests'
           $config.Run.Exit = $true
           $config.Output.Verbosity = 'Detailed'
+
+          # Test result export (JUnit XML for GitHub summary)
+          $config.TestResult.Enabled = $true
+          $config.TestResult.OutputFormat = 'JUnitXml'
+          $config.TestResult.OutputPath = './testResults.xml'
+
+          # Code coverage (JaCoCo XML, informational only)
+          $config.CodeCoverage.Enabled = $true
+          $config.CodeCoverage.OutputFormat = 'JaCoCo'
+          $config.CodeCoverage.OutputPath = './coverage.xml'
+          $config.CodeCoverage.Path = @('./Public', './Private')
+
           Invoke-Pester -Configuration $config
+
+      - name: Publish test results
+        if: always()
+        uses: dorny/test-reporter@v2
+        with:
+          name: Pester Tests
+          path: testResults.xml
+          reporter: java-junit
+
+      - name: Upload coverage and test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-artifacts
+          path: |
+            coverage.xml
+            testResults.xml

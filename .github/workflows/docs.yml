@@ -1,0 +1,63 @@
+name: Publish Docs
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install PowerShell
+        uses: actions/setup-powershell@v1
+
+      - name: Install PlatyPS
+        shell: pwsh
+        run: Install-PSResource -Name Microsoft.PowerShell.PlatyPS -TrustRepository
+
+      - name: Export MAML
+        shell: pwsh
+        run: |
+          Import-Module ./DJMLog.psd1 -Force
+          New-Item -ItemType Directory -Path ./en-US -Force | Out-Null
+          $measured = Measure-PlatyPSMarkdown -Path ./docs/commands/*.md
+          $cmdFiles = $measured.Where({ $_.Filetype -match 'CommandHelp' })
+          $imported = foreach ($f in $cmdFiles) { Import-MarkdownCommandHelp -Path $f.FilePath }
+          $imported | Export-MamlCommandHelp -OutputFolder ./en-US -Force
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install MkDocs
+        run: pip install -r requirements.txt
+
+      - name: Build site
+        run: mkdocs build --strict
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
