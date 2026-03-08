@@ -28,8 +28,7 @@ Read-DJMLog [[-LogPath] <string>] [[-Level] <string[]>] [[-CorrelationId] <strin
 
 ## ALIASES
 
-This cmdlet has the following aliases,
-  {{Insert list of aliases}}
+None.
 
 ## DESCRIPTION
 
@@ -83,40 +82,54 @@ When -Raw is specified,
 
 ### EXAMPLE 1
 
+```powershell
 # Return all ERROR entries as objects
 $errors = Read-DJMLog -Level ERROR
 $errors | Select-Object LocalTime, Message, Error_Message
+```
 
 ### EXAMPLE 2
 
+```powershell
 # Colorized console view filtered by level and time window
 Read-DJMLog -Level WARN, ERROR -Since (Get-Date).AddHours(-4) -Colorize
+```
 
 ### EXAMPLE 3
 
+```powershell
 # Filter by message content and export to CSV
 Read-DJMLog -MessageContains 'provisioning' -ExportCsv -CsvPath C:\Reports\provision.csv
+```
 
 ### EXAMPLE 4
 
+```powershell
 # Colorize to console and also capture results for further processing
 $results = Read-DJMLog -Level ERROR -Colorize -PassThru
 $results | Group-Object CorrelationId | Where-Object { $_.Count -gt 1 }
+```
 
 ### EXAMPLE 5
 
+```powershell
 # Retrieve all entries for a specific operation by correlation ID
 Read-DJMLog -CorrelationId $cid | Format-Table LocalTime, Level, Message
+```
 
 ### EXAMPLE 6
 
+```powershell
 # Show the 20 most recent entries interactively on Windows
 Read-DJMLog -Last 20 -OutGridView
+```
 
 ### EXAMPLE 7
 
+```powershell
 # Emit raw JSON strings for forwarding or external processing
 Read-DJMLog -Level ERROR -Raw | Set-Content -LiteralPath C:\export\errors.jsonl
+```
 
 ## PARAMETERS
 
@@ -459,6 +472,8 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 [about_CommonParameters](https://go.microsoft.com/fwlink/?LinkID=113216).
 
 ## INPUTS
+
+None. This cmdlet does not accept pipeline input.
 
 ## OUTPUTS
 

@@ -38,8 +38,7 @@ Write-DJMLog -Message <string> [-Level <string>] [-CorrelationId <string>] [-Log
 
 ## ALIASES
 
-This cmdlet has the following aliases,
-  {{Insert list of aliases}}
+None.
 
 ## DESCRIPTION
 
@@ -126,13 +125,16 @@ Each
 
 ### EXAMPLE 1
 
+```powershell
 # Basic usage with a shared correlation ID across an operation
 $cid = (New-Guid).Guid
 Write-DJMLog -Message 'Sync started' -Level INFO -CorrelationId $cid
 Write-DJMLog -Message 'Sync completed' -Level INFO -CorrelationId $cid
+```
 
 ### EXAMPLE 2
 
+```powershell
 # Attach structured metadata to an entry
 $cid = (New-Guid).Guid
 Write-DJMLog -Message 'User provisioned' -Level INFO -CorrelationId $cid -Metadata @{
@@ -140,9 +142,11 @@ Write-DJMLog -Message 'User provisioned' -Level INFO -CorrelationId $cid -Metada
     Department        = 'Engineering'
     LicenseSku        = 'ENTERPRISEPREMIUM'
 }
+```
 
 ### EXAMPLE 3
 
+```powershell
 # Capture a terminating error with full invocation context
 $cid = (New-Guid).Guid
 try {
@@ -151,22 +155,29 @@ try {
 catch {
     Write-DJMLog -Message 'Failed to read config file' -Level ERROR -ErrorObject $_ -CorrelationId $cid
 }
+```
 
 ### EXAMPLE 4
 
+```powershell
 # Use PassThru to capture the entry object while writing
 $entry = Write-DJMLog -Message 'Provisioning started' -Level INFO -PassThru
+```
 
 ### EXAMPLE 5
 
+```powershell
 # Configure rotation once via Set-DJMLogConfig; all subsequent calls honour it
 Set-DJMLogConfig -Path 'C:\Logs\app.jsonl' -MaxSizeMB 100
 Write-DJMLog -Message 'Entry after rotation check'
+```
 
 ### EXAMPLE 6
 
+```powershell
 # Per-call level override — suppress this entry when module threshold is lower
 Write-DJMLog -Message 'Verbose diagnostic' -Level DEBUG -MinLevel DEBUG
+```
 
 ## PARAMETERS
 
@@ -667,6 +678,8 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 [about_CommonParameters](https://go.microsoft.com/fwlink/?LinkID=113216).
 
 ## INPUTS
+
+None. This cmdlet does not accept pipeline input.
 
 ## OUTPUTS
 
