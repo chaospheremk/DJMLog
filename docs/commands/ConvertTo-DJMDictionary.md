@@ -37,17 +37,11 @@ None.
 
 Accepts input via two mutually exclusive parameter sets:
 
-  FromObjectList
-      Each PSObject (piped or passed directly) is added to the dictionary
-      using the value of the specified property as its key.
-Keys are
-      trimmed and lowercased before insertion.
-Duplicate keys emit a
-      non-terminating error and the second object is discarded.
+**FromObjectList:**
+Each PSObject (piped or passed directly) is added to the dictionary using the value of the specified property as its key. Keys are trimmed and lowercased before insertion. Duplicate keys emit a non-terminating error and the second object is discarded.
 
-  FromHashtable
-      Each key-value pair in the hashtable is copied into the dictionary
-      as-is, with no key transformation applied.
+**FromHashtable:**
+Each key-value pair in the hashtable is copied into the dictionary as-is, with no key transformation applied.
 
 ## EXAMPLES
 

@@ -32,51 +32,26 @@ None.
 
 ## DESCRIPTION
 
-Streams the target file line by line using [System.IO.File]::ReadLines,
-keeping memory usage flat regardless of file size.
-Each line is parsed
-as a JSON object.
-Lines that cannot be parsed, have an invalid timestamp,
-or are missing Level or Message are skipped with a warning.
+Streams the target file line by line using `[System.IO.File]::ReadLines`, keeping memory usage flat regardless of file size. Each line is parsed as a JSON object. Lines that cannot be parsed, have an invalid timestamp, or are missing Level or Message are skipped with a warning.
 
-Filtering is applied before object construction.
-All active filters must
-match for an entry to be included.
--First and -Last are applied after all
-other filters have been evaluated.
--First and -Last cannot be combined;
-if both are supplied, -First is honoured and a warning is emitted.
+Filtering is applied before object construction. All active filters must match for an entry to be included. -First and -Last are applied after all other filters have been evaluated. -First and -Last cannot be combined; if both are supplied, -First is honoured and a warning is emitted.
 
-Metadata flattening:
-    Nested Metadata properties are recursively promoted to top-level
-    columns using underscore-separated key paths.
-Flattening descends
-    through all levels of nesting.
-For example:
-        Metadata.Error.Message      -> Error_Message
-        Metadata.Http.Response.Code -> Http_Response_Code
+**Metadata flattening:**
+Nested Metadata properties are recursively promoted to top-level columns using underscore-separated key paths. Flattening descends through all levels of nesting. For example:
 
-Column normalisation:
-    All returned objects are padded with $null for any column not present
-    in that specific entry, so every object in the output shares an
-    identical property set.
-Column order reflects first-seen insertion
-    order across the result set after -First or -Last slicing.
+- `Metadata.Error.Message` becomes `Error_Message`
+- `Metadata.Http.Response.Code` becomes `Http_Response_Code`
 
-Output timestamps:
-    LocalTime — entry timestamp converted to the local timezone
-    UtcTime   — entry timestamp in UTC
+**Column normalisation:**
+All returned objects are padded with `$null` for any column not present in that specific entry, so every object in the output shares an identical property set. Column order reflects first-seen insertion order across the result set after -First or -Last slicing.
 
-Output behaviour:
-    By default, PSCustomObjects are emitted to the pipeline.
-When
-    -Colorize, -ExportCsv, or -OutGridView are specified, pipeline output
-    is suppressed unless -PassThru is also present.
-When -Raw is specified,
-    the unmodified JSON strings are emitted to the pipeline instead of
-    objects.
--Colorize, -ExportCsv, and -OutGridView still operate on the
-    parsed objects regardless of -Raw.
+**Output timestamps:**
+
+- **LocalTime** — entry timestamp converted to the local timezone
+- **UtcTime** — entry timestamp in UTC
+
+**Output behaviour:**
+By default, PSCustomObjects are emitted to the pipeline. When -Colorize, -ExportCsv, or -OutGridView are specified, pipeline output is suppressed unless -PassThru is also present. When -Raw is specified, the unmodified JSON strings are emitted to the pipeline instead of objects. -Colorize, -ExportCsv, and -OutGridView still operate on the parsed objects regardless of -Raw.
 
 ## EXAMPLES
 

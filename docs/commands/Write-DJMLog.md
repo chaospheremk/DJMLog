@@ -42,84 +42,49 @@ None.
 
 ## DESCRIPTION
 
-Writes one JSON object per call to the target file, appending a newline
-after each entry.
-The log directory is created automatically if it does
-not exist.
-All timestamps are ISO 8601 UTC.
-Writes use
-[System.IO.File]::AppendAllText for a shorter file lock window, reducing
-collision risk when multiple runspaces write to the same file.
+Writes one JSON object per call to the target file, appending a newline after each entry. The log directory is created automatically if it does not exist. All timestamps are ISO 8601 UTC. Writes use `[System.IO.File]::AppendAllText` for a shorter file lock window, reducing collision risk when multiple runspaces write to the same file.
 
 Each log entry always contains:
-    UtcTimestamp  — ISO 8601 UTC timestamp of the write
-    Level         — Severity level, uppercased
-    Message       — The provided message string
-    CorrelationId — GUID string linking related entries
 
-Minimum level filtering:
-    When a module-level MinLevel has been configured via Set-DJMLogConfig
-    (or -MinLevel is passed per-call), entries whose level falls below the
-    threshold are silently discarded without acquiring the mutex or touching
-    the file.
-Level order: DEBUG < INFO < WARN < ERROR.
+- **UtcTimestamp** — ISO 8601 UTC timestamp of the write
+- **Level** — Severity level, uppercased
+- **Message** — The provided message string
+- **CorrelationId** — GUID string linking related entries
 
-When -Metadata is provided, its key-value pairs are written under a
-nested Metadata object.
-Hashtables and PSCustomObjects are both supported.
-Any other type is stored under Metadata.RawValue.
+**Minimum level filtering:**
+When a module-level MinLevel has been configured via Set-DJMLogConfig (or -MinLevel is passed per-call), entries whose level falls below the threshold are silently discarded without acquiring the mutex or touching the file. Level order: DEBUG < INFO < WARN < ERROR.
 
-Caller auto-capture:
-    By default, Write-DJMLog captures the calling script name, function
-    name, and line number from the PowerShell call stack and stores them
-    under Metadata.Caller.
-Use -NoCaller to suppress this for a single
-    call, or Set-DJMLogConfig -IncludeCaller $false to disable globally.
-    A user-supplied Metadata.Caller value is never overwritten.
+When -Metadata is provided, its key-value pairs are written under a nested Metadata object. Hashtables and PSCustomObjects are both supported. Any other type is stored under Metadata.RawValue.
 
-When -ErrorObject is provided alongside -Level ERROR, error context is
-captured under Metadata.Error with the following fields:
-    ScriptName      — Path of the script where the error originated
-    LineNumber      — Line number within that script
-    Command         — Name of the command that threw
-    PositionMessage — First line of the invocation position message
-    Type            — Full exception type name
-    Message         — Exception message text
+**Caller auto-capture:**
+By default, Write-DJMLog captures the calling script name, function name, and line number from the PowerShell call stack and stores them under Metadata.Caller. Use -NoCaller to suppress this for a single call, or `Set-DJMLogConfig -IncludeCaller $false` to disable globally. A user-supplied Metadata.Caller value is never overwritten.
 
-Log rotation:
-    Size-based: when -MaxSizeMB is greater than zero (or a module-level
-    maximum has been configured via Set-DJMLogConfig), Write-DJMLog checks
-    the current file size at the start of each call.
-If the file meets or
-    exceeds the threshold, it is rotated.
+When -ErrorObject is provided alongside -Level ERROR, error context is captured under Metadata.Error with the following fields:
 
-    Time-based: when -RotationSchedule is Daily or Hourly (or configured
-    via Set-DJMLogConfig), the file's UTC creation time is compared to the
-    current period.
-If the file was created in a prior day or hour, it is
-    rotated before writing.
+- **ScriptName** — Path of the script where the error originated
+- **LineNumber** — Line number within that script
+- **Command** — Name of the command that threw
+- **PositionMessage** — First line of the invocation position message
+- **Type** — Full exception type name
+- **Message** — Exception message text
 
-    The rotated file name uses the pattern:
-    <basename>_yyyyMMdd-HHmmss<extension>
+**Log rotation:**
 
-Retention cleanup (runs only after a rotation):
-    -RetainDays N  — deletes rotated files older than N days.
-    -RetainFiles N — keeps only the N most recent rotated files.
-    Both can be used together; RetainDays runs first.
-    Set either to 0 (the default) to keep all rotated files.
+- **Size-based:** when -MaxSizeMB is greater than zero (or a module-level maximum has been configured via Set-DJMLogConfig), Write-DJMLog checks the current file size at the start of each call. If the file meets or exceeds the threshold, it is rotated.
+- **Time-based:** when -RotationSchedule is Daily or Hourly (or configured via Set-DJMLogConfig), the file's UTC creation time is compared to the current period. If the file was created in a prior day or hour, it is rotated before writing.
+- The rotated file name uses the pattern: `<basename>_yyyyMMdd-HHmmss<extension>`
 
-A non-terminating warning is emitted if the file cannot be written, if the
-mutex timeout expires before the write lock can be acquired, or if
--ErrorObject is supplied without -Level ERROR.
+**Retention cleanup** (runs only after a rotation):
 
-Parallel safety:
-    All writes are serialised through a named system mutex
-    ('DJMLog_WriteAccess').
-The mutex is a kernel object, so it coordinates
-    correctly across PowerShell runspaces that do not share memory.
-Each
-    call acquires the mutex, performs the AppendAllText, and immediately
-    releases it, keeping the lock window as short as possible.
+- `-RetainDays N` — deletes rotated files older than N days.
+- `-RetainFiles N` — keeps only the N most recent rotated files.
+- Both can be used together; RetainDays runs first.
+- Set either to 0 (the default) to keep all rotated files.
+
+A non-terminating warning is emitted if the file cannot be written, if the mutex timeout expires before the write lock can be acquired, or if -ErrorObject is supplied without -Level ERROR.
+
+**Parallel safety:**
+All writes are serialised through a named system mutex (`DJMLog_WriteAccess`). The mutex is a kernel object, so it coordinates correctly across PowerShell runspaces that do not share memory. Each call acquires the mutex, performs the AppendAllText, and immediately releases it, keeping the lock window as short as possible.
 
 ## EXAMPLES
 
