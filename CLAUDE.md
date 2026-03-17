@@ -1,40 +1,62 @@
-# CLAUDE.md
+# Code Session — `DJMLog Structured Logging Module`
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Context
 
-## Project Overview
+This is the code repository for the `DJMLog Structured Logging Module` vault project.
+Vault memory files are one level up in the parent directory:
 
-DJMLog is a PowerShell 7+ module (`DJMLog.psm1`) for structured JSONL logging in automation scripts. It is a single-file module with no build step — import it directly with `Import-Module`.
+- ../bugs.md        — known issues and solutions; check before debugging
+- ../decisions.md   — decisions made; check before proposing changes
+- ../key-facts.md   — project configuration reference
+- ../issues.md      — work log
 
-## Development Commands
+The vault session that manages planning and note-taking runs from the
+vault root. This code session runs from this directory only.
 
-```powershell
-# Import the module for interactive testing
-Import-Module ./DJMLog.psm1 -Force
+## On Startup
 
-# Run a quick smoke test
-Set-DJMLogConfig -Path ./test.jsonl
-Write-DJMLog -Level INFO -Message "Test entry"
-Read-DJMLog -Path ./test.jsonl
+1. Read ../decisions.md
+2. Read ../bugs.md
+3. Read ../key-facts.md
 
-# View exported functions
-Get-Command -Module DJMLog
+## Memory Protocols
 
-# Read inline help for any function
-Get-Help Write-DJMLog -Full
-Get-Help Read-DJMLog -Full
-```
+**During the session, watch for:**
 
-PowerShell 7+ is required. There is no test suite, build system, or linter configured in the repo.
+- Configuration patterns, parameter conventions, or environment facts worth keeping as reference — prompt to add to ../key-facts.md
+- Learnings that are broadly reusable beyond this project — flag them so the vault session can promote them to resource notes
+- Decisions being made conversationally that haven't been logged — prompt to add to ../decisions.md before the session ends
+
+Before proposing a technical approach: read ../decisions.md
+Before debugging: read ../bugs.md
+After fixing a bug: append to ../bugs.md using the standard format
+After making a technical decision: append to ../decisions.md as an ADR
+After completing a work block: append to ../issues.md
+
+## Rules
+
+- Read ../../../_meta/security.md before writing any code
+- Read ../../../_meta/powershell-housestyle.md before writing any PowerShell
+- Read ../../../_meta/graph-api-skills.md before writing any Graph API code
+- No real IDs, hostnames, credentials, or org-identifying content — ever
+- All parameters use placeholders: `<tenant-id>` `<subscription-id>` etc.
+- Never modify files outside this code/ folder except the four memory files
+  (../bugs.md, ../decisions.md, ../key-facts.md, ../issues.md)
+
+## GitHub
+
+This folder is its own git repository.
+Push directly to this project's GitHub remote.
+Do not use the vault's 50-Outputs/ for this project's code.
 
 ## Architecture
 
-Six exported functions in a single module file (`DJMLog.psm1`):
+Six exported functions across individual files in `Public/`:
 
 | Function | Role |
 |---|---|
-| `Set-DJMLogConfig` | Sets module-level defaults (path, max size, mutex timeout, Log Analytics integration). Accepts direct params or a JSON config file. |
-| `Write-DJMLog` | Appends a JSONL entry atomically using a named OS mutex (`DJMLog_WriteAccess`). Rotates the file when `MaxSizeMB` is exceeded. Optionally buffers entries for Azure Log Analytics. |
+| `Set-DJMLogConfig` | Sets module-level defaults (path, max size, mutex timeout, min level, rotation schedule, retention policies, caller auto-capture, Log Analytics integration). Accepts direct params or a JSON config file. |
+| `Write-DJMLog` | Appends a JSONL entry atomically using a named OS mutex (`DJMLog_WriteAccess`). Rotates the file when `MaxSizeMB` is exceeded or on schedule. Skips entries below `MinLevel`. Auto-captures caller info when `IncludeCaller` is enabled. Optionally buffers entries for Azure Log Analytics. |
 | `Read-DJMLog` | Streams a JSONL file line-by-line, filters by level/correlation/time/text, flattens nested metadata, and normalises all output objects to identical property sets. |
 | `Send-DJMLogBuffer` | Flushes the in-memory log buffer to Azure Log Analytics via the Logs Ingestion API (DCR-based). Chunks batches to 500 KB. |
 | `ConvertTo-DJMDictionary` | Converts a PSObject list or hashtable to `Dictionary[string, PSObject]` with lowercase keys. |
@@ -47,7 +69,10 @@ Two private helpers:
 ### Key design points
 
 - **Parallel safety**: `Write-DJMLog` acquires a named mutex before each append so multiple runspaces can write without file-lock contention. `MutexTimeoutMs` (default 2000 ms) controls how long to wait.
-- **Log rotation**: when the file exceeds `MaxSizeMB`, it is renamed with a UTC timestamp suffix before a new file is started.
+- **Log rotation**: when the file exceeds `MaxSizeMB` or the configured `RotationSchedule` (Daily/Weekly/Monthly) triggers, the file is renamed with a UTC timestamp suffix before a new file is started.
+- **Min-level filtering**: `MinLevel` (DEBUG < INFO < WARN < ERROR) controls the minimum severity written; entries below the threshold are silently dropped.
+- **Retention policies**: `RetainDays` and `RetainFiles` automatically clean up old rotated log files.
+- **Caller auto-capture**: when `IncludeCaller` is `$true` (the default), each entry's Metadata includes the calling script path and line number.
 - **Azure Log Analytics integration**: optional buffered ingestion via the Logs Ingestion API (DCR-based REST). Entries are buffered in-memory and flushed in batches. Supports Commercial, GCCHigh, and DoD cloud environments (default GCCHigh). Auth: certificate JWT assertion, client secret, or pre-acquired bearer token. Circuit breaker disables auto-flush after consecutive failures.
 - **Metadata flattening**: `Read-DJMLog` recursively promotes nested metadata to top-level columns so output can be piped to `Export-Csv` or `Out-GridView` cleanly.
 - **Column normalisation**: every object returned by `Read-DJMLog` carries the same property set (the union of all columns seen) so that `Format-Table` and CSV export produce consistent columns even when entries have different metadata shapes.
@@ -57,11 +82,15 @@ Two private helpers:
 ```json
 {
     "UtcTimestamp": "2026-03-01T12:34:56.789Z",
-    "Level": "INFO | WARNING | ERROR | DEBUG | VERBOSE",
+    "Level": "INFO | WARN | ERROR | DEBUG",
     "Message": "string",
     "CorrelationId": "guid-string",
     "Metadata": {
         "AnyKey": "AnyValue",
+        "Caller": {
+            "ScriptName": "path",
+            "LineNumber": 10
+        },
         "Error": {
             "ScriptName": "path",
             "LineNumber": 42,
@@ -81,14 +110,19 @@ Two private helpers:
     "Path": "C:\\Logs\\automation.jsonl",
     "MaxSizeMB": 50,
     "MutexTimeoutMs": 2000,
+    "MinLevel": "INFO",
+    "RotationSchedule": "Daily",
+    "RetainDays": 30,
+    "RetainFiles": 10,
+    "IncludeCaller": true,
     "LogAnalyticsEnabled": true,
     "CloudEnvironment": "GCCHigh",
-    "DcrEndpointUri": "https://my-dce.eastus.ingest.monitor.azure.us",
-    "DcrImmutableId": "dcr-abc123",
-    "DcrStreamName": "Custom-MyTable_CL",
-    "TenantId": "00000000-0000-0000-0000-000000000000",
-    "AppId": "00000000-0000-0000-0000-000000000000",
-    "CertificateSubject": "CN=DJMLog-Auth",
+    "DcrEndpointUri": "<dce-endpoint-uri>",
+    "DcrImmutableId": "<dcr-immutable-id>",
+    "DcrStreamName": "<dcr-stream-name>",
+    "TenantId": "<tenant-id>",
+    "AppId": "<app-id>",
+    "CertificateSubject": "<certificate-subject>",
     "FlushThreshold": 100,
     "MaxBufferSize": 5000,
     "MaxFlushRetries": 3
@@ -138,20 +172,3 @@ Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
 # Run Pester tests
 Invoke-Pester ./tests/ -Output Detailed
 ```
-
-## PowerShell House Rules
-
-- **Language**: PowerShell 7+ only. No compatibility shims for Windows PowerShell 5.x.
-- **Simplicity**: Never add unrequested functionality. Minimum complexity for the current task.
-- **Iteration**: `foreach ($item in $collection)` — never `ForEach-Object` / `%`.
-- **Filtering**: `.Where({ … })` with optional mode — never `Where-Object` / `?`.
-- **Collections**: `ArrayList` (small/heterogeneous), `List[T]` (large/typed), `Dictionary[string,PSObject]` (lookups).
-- **Memory**: `$var = $null` to release large temporaries; `Remove-Variable` for global/session cleanup.
-- **Bulk data**: Retrieve only required properties; early-exit on empty sets before further processing.
-- **Logging**: Minimal structured events compatible with `Write-DJMLog` JSONL format.
-- **Functions**: `[CmdletBinding()]`, validated parameters, return objects not text.
-- **Errors**: Throw only on unrecoverable failures; otherwise capture, log, and continue.
-- **Help**: Synopsis, description, parameter docs, and at least one example on every public function.
-- **Strict mode**: Never use `Set-StrictMode`.
-- **Output in chat**: Always display PowerShell code as fenced code blocks. Never create a file unless explicitly requested.
-- **Microsoft Learn MCP**: For any Microsoft product (PowerShell, Azure, Entra ID, AD, M365, Graph API, MSFT SDKs) — query the Microsoft Learn MCP tool first before relying on training knowledge for APIs, cmdlets, or product behavior.

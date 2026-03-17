@@ -40,7 +40,9 @@ Read-DJMLog -Path ./automation.jsonl -Level ERROR
 ## Features
 
 - **Atomic writes** — named OS mutex prevents file-lock contention across parallel runspaces
-- **Log rotation** — automatic file rotation when size exceeds the configured threshold
+- **Log rotation** — automatic file rotation by size (`MaxSizeMB`) or schedule (Daily/Weekly/Monthly) with configurable retention policies
+- **Min-level filtering** — `MinLevel` threshold silently drops entries below the configured severity
+- **Caller auto-capture** — automatically records the calling script and line number in each log entry (enabled by default)
 - **Structured metadata** — nested metadata is flattened to top-level columns for `Export-Csv` and `Out-GridView`
 - **Correlation tracking** — group related log entries with a shared correlation ID
 - **Azure Log Analytics** — optional buffered ingestion via the DCR-based Logs Ingestion API (Commercial, GCCHigh, DoD)
@@ -70,7 +72,11 @@ Each call to `Write-DJMLog` appends a single JSON line:
     "CorrelationId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
     "Metadata": {
         "UserPrincipalName": "jsmith@contoso.com",
-        "Department": "Engineering"
+        "Department": "Engineering",
+        "Caller": {
+            "ScriptName": "C:\\Scripts\\Provision-User.ps1",
+            "LineNumber": 42
+        }
     }
 }
 ```

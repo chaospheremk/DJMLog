@@ -6,8 +6,8 @@ Structured JSONL logging module for PowerShell 7+.
 Module loader. Initialises shared state then dot-sources all private helpers
 and public functions from their respective subdirectories.
 
-Exports five functions:
-  Set-DJMLogConfig, Write-DJMLog, Read-DJMLog,
+Exports six functions:
+  Set-DJMLogConfig, Write-DJMLog, Read-DJMLog, Send-DJMLogBuffer,
   ConvertTo-DJMDictionary, ConvertTo-DJMOrderedPSObject
 
 .NOTES
