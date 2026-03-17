@@ -2,71 +2,56 @@ name: CI
 
 on:
   push:
-    branches: [ main, dev ]
-    paths:
-      - 'Public/**'
-      - 'Private/**'
-      - 'tests/**'
-      - 'DJMLog.psd1'
-      - 'DJMLog.psm1'
-      - 'PSScriptAnalyzerSettings.psd1'
-      - '.github/workflows/ci.yml'
+    branches: [main, dev]
   pull_request:
-    branches: [ main ]
-    paths:
-      - 'Public/**'
-      - 'Private/**'
-      - 'tests/**'
-      - 'DJMLog.psd1'
-      - 'DJMLog.psm1'
-      - 'PSScriptAnalyzerSettings.psd1'
-      - '.github/workflows/ci.yml'
+    branches: [main]
 
 jobs:
-  lint-and-test:
+  changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      actions: read
-      checks: write
-
+      pull-requests: read
+    outputs:
+      powershell: ${{ steps.filter.outputs.powershell }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            powershell:
+              - 'Public/**'
+              - 'Private/**'
+              - 'tests/**'
+              - 'DJMLog.psd1'
+              - 'DJMLog.psm1'
+              - 'PSScriptAnalyzerSettings.psd1'
+              - '.github/workflows/ci.yml'
+
+  lint:
+    name: PSScriptAnalyzer
+    needs: changes
+    if: needs.changes.outputs.powershell == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Cache PowerShell modules
-        id: cache-psmodules
         uses: actions/cache@v4
         with:
           path: ~/.local/share/powershell/Modules
-          key: ${{ runner.os }}-psmodules-week${{ github.run_number }}
-          restore-keys: |
-            ${{ runner.os }}-psmodules-
+          key: ps-lint-${{ hashFiles('.github/workflows/ci.yml') }}
 
-      - name: Install or update PSScriptAnalyzer and Pester
+      - name: Install PSScriptAnalyzer
         shell: pwsh
         run: |
-          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-
-          foreach ($mod in @(
-              @{ Name = 'PSScriptAnalyzer'; MinVer = $null },
-              @{ Name = 'Pester';           MinVer = '5.0.0' }
-          )) {
-              $installed = Get-Module -ListAvailable -Name $mod.Name |
-                  Sort-Object Version -Descending |
-                  Select-Object -First 1
-
-              $latest = Find-Module -Name $mod.Name -ErrorAction Stop
-
-              if (-not $installed -or $installed.Version -lt $latest.Version) {
-                  Write-Host "Installing $($mod.Name) $($latest.Version) (was: $($installed.Version))..."
-                  $params = @{ Name = $mod.Name; Force = $true; Scope = 'CurrentUser' }
-                  if ($mod.MinVer) { $params['MinimumVersion'] = $mod.MinVer }
-                  Install-Module @params
-              }
-              else {
-                  Write-Host "$($mod.Name) $($installed.Version) is up to date."
-              }
+          if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
+              Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser
           }
 
       - name: Run PSScriptAnalyzer
@@ -74,10 +59,34 @@ jobs:
         run: |
           $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
           if ($results) {
-              $results | Format-Table -AutoSize
+              $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize
               throw "PSScriptAnalyzer reported $($results.Count) issue(s)."
           }
           Write-Host 'PSScriptAnalyzer: no issues found.' -ForegroundColor Green
+
+  test:
+    name: Pester Tests
+    needs: changes
+    if: needs.changes.outputs.powershell == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache PowerShell modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/powershell/Modules
+          key: ps-test-${{ hashFiles('.github/workflows/ci.yml') }}
+
+      - name: Install Pester
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable -Name Pester)) {
+              Install-Module -Name Pester -Force -Scope CurrentUser -MinimumVersion 5.0.0
+          }
 
       - name: Run Pester
         shell: pwsh
@@ -86,18 +95,13 @@ jobs:
           $config.Run.Path = './tests'
           $config.Run.Exit = $true
           $config.Output.Verbosity = 'Detailed'
-
-          # Test result export (JUnit XML for GitHub summary)
           $config.TestResult.Enabled = $true
           $config.TestResult.OutputFormat = 'JUnitXml'
-          $config.TestResult.OutputPath = './testResults.xml'
-
-          # Code coverage (JaCoCo XML, informational only)
+          $config.TestResult.OutputPath = './TestResults.xml'
           $config.CodeCoverage.Enabled = $true
           $config.CodeCoverage.OutputFormat = 'JaCoCo'
-          $config.CodeCoverage.OutputPath = './coverage.xml'
+          $config.CodeCoverage.OutputPath = './CoverageResults.xml'
           $config.CodeCoverage.Path = @('./Public', './Private')
-
           Invoke-Pester -Configuration $config
 
       - name: Publish test results
@@ -105,14 +109,48 @@ jobs:
         uses: dorny/test-reporter@v2
         with:
           name: Pester Tests
-          path: testResults.xml
+          path: TestResults.xml
           reporter: java-junit
 
-      - name: Upload coverage and test results
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-artifacts
-          path: |
-            coverage.xml
-            testResults.xml
+          name: test-results
+          path: TestResults.xml
+
+      - name: Upload coverage results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-results
+          path: CoverageResults.xml
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+  ci-gate:
+    name: CI Gate
+    if: always()
+    needs: [lint, test, secret-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check job results
+        run: |
+          if [[ "${{ needs.lint.result }}" == "failure" || \
+                "${{ needs.test.result }}" == "failure" || \
+                "${{ needs.secret-scan.result }}" == "failure" ]]; then
+            echo "One or more CI jobs failed"
+            exit 1
+          fi
+          echo "All CI jobs passed or were skipped"
