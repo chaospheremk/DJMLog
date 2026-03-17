@@ -1,4 +1,6 @@
 @{
+    Severity = @('Warning', 'Error')
+
     # Run all default rules except the ones excluded below.
     # The four rules in the Rules block are enabled by default; the block
     # is kept here as documentation of the rules we explicitly care about.
