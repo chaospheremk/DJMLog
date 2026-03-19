@@ -7,7 +7,7 @@ A PowerShell 7+ module for structured JSONL logging in automation scripts.
 
 DJMLog provides atomic, mutex-protected file writes, automatic log rotation, metadata flattening for clean CSV/grid output, and optional buffered ingestion to Azure Log Analytics via the Logs Ingestion API.
 
-**[Documentation](https://chaospheremk.github.io/DJMLog/)**
+**[Documentation](https://chaospheremk.github.io/DJMLog/)** | **[Changelog](CHANGELOG.md)**
 
 ## Installation
 
