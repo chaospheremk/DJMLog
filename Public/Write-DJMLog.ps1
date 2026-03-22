@@ -198,6 +198,7 @@ function Write-DJMLog {
     param (
         [Parameter(Mandatory, ParameterSetName = 'Default')]
         [Parameter(Mandatory, ParameterSetName = 'Error')]
+        [ValidateNotNullOrEmpty()]
         [string]$Message,
 
         [Parameter(ParameterSetName = 'Default')]

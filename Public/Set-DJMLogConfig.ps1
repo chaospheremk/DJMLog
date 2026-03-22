@@ -170,18 +170,28 @@ function Set-DJMLogConfig {
 
     .EXAMPLE
     # Enable Log Analytics with certificate authentication
-    Set-DJMLogConfig -LogAnalyticsEnabled $true -CloudEnvironment GCCHigh `
-        -DcrEndpointUri 'https://my-dce.eastus.ingest.monitor.azure.us' `
-        -DcrImmutableId 'dcr-abc123' -DcrStreamName 'Custom-MyTable_CL' `
-        -TenantId '00000000-...' -AppId '11111111-...' `
-        -CertificateSubject 'CN=DJMLog-Auth'
+    $params = @{
+        LogAnalyticsEnabled = $true
+        CloudEnvironment    = 'GCCHigh'
+        DcrEndpointUri      = 'https://my-dce.eastus.ingest.monitor.azure.us'
+        DcrImmutableId      = 'dcr-abc123'
+        DcrStreamName       = 'Custom-MyTable_CL'
+        TenantId            = '00000000-...'
+        AppId               = '11111111-...'
+        CertificateSubject  = 'CN=DJMLog-Auth'
+    }
+    Set-DJMLogConfig @params
 
     .EXAMPLE
     # Enable Log Analytics with a pre-acquired bearer token
-    Set-DJMLogConfig -LogAnalyticsEnabled $true `
-        -DcrEndpointUri 'https://my-dce.eastus.ingest.monitor.azure.us' `
-        -DcrImmutableId 'dcr-abc123' -DcrStreamName 'Custom-MyTable_CL' `
-        -BearerToken $myToken
+    $params = @{
+        LogAnalyticsEnabled = $true
+        DcrEndpointUri      = 'https://my-dce.eastus.ingest.monitor.azure.us'
+        DcrImmutableId      = 'dcr-abc123'
+        DcrStreamName       = 'Custom-MyTable_CL'
+        BearerToken         = $myToken
+    }
+    Set-DJMLogConfig @params
     #>
     [CmdletBinding()]
     param (

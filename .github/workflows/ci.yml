@@ -102,6 +102,24 @@ jobs:
           $config.CodeCoverage.Path = @('./Public', './Private')
           Invoke-Pester -Configuration $config
 
+      - name: Check code coverage threshold
+        shell: pwsh
+        run: |
+          [xml]$coverage = Get-Content './CoverageResults.xml' -Raw
+          $counter = $coverage.report.counter | Where-Object { $_.type -eq 'LINE' }
+          $covered = [int]$counter.covered
+          $missed = [int]$counter.missed
+          $total = $covered + $missed
+          if ($total -eq 0) {
+              Write-Host 'No coverage data — skipping threshold check.'
+              exit 0
+          }
+          $percent = [math]::Round(($covered / $total) * 100, 1)
+          Write-Host "Code coverage: $percent% ($covered/$total lines)"
+          if ($percent -lt 50) {
+              throw "Code coverage $percent% is below the 50% minimum threshold."
+          }
+
       - name: Publish test results
         if: always()
         uses: dorny/test-reporter@v2
