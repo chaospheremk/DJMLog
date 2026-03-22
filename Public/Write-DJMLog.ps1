@@ -194,7 +194,6 @@ function Write-DJMLog {
     Write-DJMLog -Message 'Verbose diagnostic' -Level DEBUG -MinLevel DEBUG
     #>
     [CmdletBinding()]
-    [OutputType([PSCustomObject])]
     param (
         [Parameter(Mandatory, ParameterSetName = 'Default')]
         [Parameter(Mandatory, ParameterSetName = 'Error')]
