@@ -21,5 +21,8 @@ desktop.ini
 # PlatyPS MAML output (generated in CI only)
 en-US/
 
+# PlatyPS markdown command docs (generated in CI only)
+docs/commands/
+
 # MkDocs build output (generated in CI only)
 site/
