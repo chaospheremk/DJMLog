@@ -44,12 +44,12 @@ function ConvertTo-DJMDictionary {
     }
     #>
     [CmdletBinding()]
-    [OutputType([System.Collections.Generic.Dictionary[string, PSObject]])]
     param (
         [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'FromObjectList')]
         [PSObject]$InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'FromObjectList')]
+        [ValidateNotNullOrEmpty()]
         [string]$KeyProperty,
 
         [Parameter(Mandatory, ParameterSetName = 'FromHashtable')]

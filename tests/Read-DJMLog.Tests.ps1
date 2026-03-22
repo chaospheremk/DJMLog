@@ -10,10 +10,20 @@ BeforeAll {
 
     Write-DJMLog -Message 'Alpha INFO'    -Level INFO  -CorrelationId $script:CorrelationA
     Write-DJMLog -Message 'Bravo WARN'   -Level WARN  -CorrelationId $script:CorrelationA
-    Write-DJMLog -Message 'Charlie ERROR' -Level ERROR -CorrelationId $script:CorrelationB `
-                 -Metadata @{ Code = 500 }
-    Write-DJMLog -Message 'Delta DEBUG'  -Level DEBUG  -CorrelationId $script:CorrelationB `
-                 -Metadata @{ Detail = @{ Sub = 'nested' } }
+    $Params = @{
+        Message       = 'Charlie ERROR'
+        Level         = 'ERROR'
+        CorrelationId = $script:CorrelationB
+        Metadata      = @{ Code = 500 }
+    }
+    Write-DJMLog @Params
+    $Params = @{
+        Message       = 'Delta DEBUG'
+        Level         = 'DEBUG'
+        CorrelationId = $script:CorrelationB
+        Metadata      = @{ Detail = @{ Sub = 'nested' } }
+    }
+    Write-DJMLog @Params
 }
 
 AfterAll {
@@ -111,8 +121,12 @@ Describe 'Read-DJMLog' {
         }
 
         It 'returns all entries when window contains all timestamps' {
-            $results = Read-DJMLog -LogPath $script:LogFile `
-                -Since (Get-Date).AddMinutes(-5) -Until (Get-Date).AddMinutes(5)
+            $Params = @{
+                LogPath = $script:LogFile
+                Since   = (Get-Date).AddMinutes(-5)
+                Until   = (Get-Date).AddMinutes(5)
+            }
+            $results = Read-DJMLog @Params
             $results.Count | Should -Be 4
         }
 
