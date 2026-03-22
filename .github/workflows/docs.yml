@@ -37,6 +37,8 @@ jobs:
         with:
           path: ~/.local/share/powershell/Modules
           key: ps-docs-${{ hashFiles('.github/workflows/docs.yml') }}
+          restore-keys: |
+            ps-docs-
 
       - name: Install PlatyPS
         shell: pwsh

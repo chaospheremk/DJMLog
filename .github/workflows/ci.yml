@@ -44,6 +44,8 @@ jobs:
         with:
           path: ~/.local/share/powershell/Modules
           key: ps-lint-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            ps-lint-
 
       - name: Install PSScriptAnalyzer
         shell: pwsh
@@ -78,6 +80,8 @@ jobs:
         with:
           path: ~/.local/share/powershell/Modules
           key: ps-test-${{ hashFiles('.github/workflows/ci.yml') }}
+          restore-keys: |
+            ps-test-
 
       - name: Install Pester
         shell: pwsh
