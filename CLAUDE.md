@@ -18,6 +18,7 @@ vault root. This code session runs from this directory only.
 1. Read ../decisions.md
 2. Read ../bugs.md
 3. Read ../key-facts.md
+4. Run `git status` — report any untracked or modified files and offer to commit them via PR
 
 ## Memory Protocols
 
