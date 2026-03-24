@@ -250,26 +250,6 @@ function Read-DJMLog {
 
             $entryDictionaries.Add($entryDict)
             $rawLines.Add($line)
-
-            if ($Colorize) {
-                $levelAbbr = switch ($entryLevel) {
-                    'ERROR' { 'ERR' }
-                    'WARN'  { 'WRN' }
-                    'INFO'  { 'INF' }
-                    'DEBUG' { 'DBG' }
-                    default { $entryLevel.Substring(0, [Math]::Min(3, $entryLevel.Length)).ToUpperInvariant() }
-                }
-
-                $color = switch ($entryLevel) {
-                    'ERROR' { 'Red' }
-                    'WARN'  { 'Yellow' }
-                    'DEBUG' { 'DarkGray' }
-                    default { 'Gray' }
-                }
-
-                $formattedLine = "{0} [{1}] {2}" -f $entryDict['LocalTime'].ToString("yyyy-MM-dd HH:mm:ss"), $levelAbbr, $entryDict['Message']
-                Write-Host $formattedLine -ForegroundColor $color
-            }
         }
 
         # Apply -First or -Last slicing before normalisation so allKeys reflects only returned entries
@@ -281,6 +261,29 @@ function Read-DJMLog {
             $startIndex        = $entryDictionaries.Count - $Last
             $entryDictionaries = $entryDictionaries.GetRange($startIndex, $Last)
             $rawLines          = $rawLines.GetRange($startIndex, $Last)
+        }
+
+        # Colorize after slicing so only returned entries are printed
+        if ($Colorize) {
+            foreach ($entryDict in $entryDictionaries) {
+                $levelAbbr = switch ($entryDict['Level']) {
+                    'ERROR' { 'ERR' }
+                    'WARN'  { 'WRN' }
+                    'INFO'  { 'INF' }
+                    'DEBUG' { 'DBG' }
+                    default { $entryDict['Level'].Substring(0, [Math]::Min(3, $entryDict['Level'].Length)).ToUpperInvariant() }
+                }
+
+                $color = switch ($entryDict['Level']) {
+                    'ERROR' { 'Red' }
+                    'WARN'  { 'Yellow' }
+                    'DEBUG' { 'DarkGray' }
+                    default { 'Gray' }
+                }
+
+                $formattedLine = "{0} [{1}] {2}" -f $entryDict['LocalTime'].ToString("yyyy-MM-dd HH:mm:ss"), $levelAbbr, $entryDict['Message']
+                Write-Host $formattedLine -ForegroundColor $color
+            }
         }
 
         # Rebuild allKeys from the sliced set only
@@ -306,7 +309,7 @@ function Read-DJMLog {
 
         if ($ExportCsv -and ($results.Count -gt 0)) {
             try {
-                $results | Export-Csv -LiteralPath $CsvPath -NoTypeInformation -Force
+                $results | Export-Csv -LiteralPath $CsvPath -Force
                 Write-Host "Read-DJMLog: exported $($results.Count) entries to '$CsvPath'" -ForegroundColor Green
             }
             catch {

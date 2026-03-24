@@ -340,46 +340,72 @@ function Set-DJMLogConfig {
         }
     }
 
+    # Validate config-file values that bypass parameter ValidateSet / ValidateRange.
+    # Flag invalid values so the apply section skips them (cannot assign $null to
+    # ValidateSet-constrained parameter variables without triggering validation).
+    $skipMinLevel         = $false
+    $skipCloudEnvironment = $false
+    $skipRotationSchedule = $false
+
+    if ($ConfigPath -and -not $PSBoundParameters.ContainsKey('MinLevel') -and -not [string]::IsNullOrEmpty($MinLevel)) {
+        if ($MinLevel.ToUpperInvariant() -notin @('DEBUG', 'INFO', 'WARN', 'ERROR')) {
+            Write-Warning "Set-DJMLogConfig: config file MinLevel '$MinLevel' is invalid. Valid values: DEBUG, INFO, WARN, ERROR. Keeping current default."
+            $skipMinLevel = $true
+        }
+    }
+    if ($ConfigPath -and -not $PSBoundParameters.ContainsKey('CloudEnvironment') -and -not [string]::IsNullOrEmpty($CloudEnvironment)) {
+        if ($CloudEnvironment -notin @('Commercial', 'GCCHigh', 'DoD')) {
+            Write-Warning "Set-DJMLogConfig: config file CloudEnvironment '$CloudEnvironment' is invalid. Valid values: Commercial, GCCHigh, DoD. Keeping current default."
+            $skipCloudEnvironment = $true
+        }
+    }
+    if ($ConfigPath -and -not $PSBoundParameters.ContainsKey('RotationSchedule') -and -not [string]::IsNullOrEmpty($RotationSchedule)) {
+        if ($RotationSchedule -notin @('None', 'Daily', 'Hourly')) {
+            Write-Warning "Set-DJMLogConfig: config file RotationSchedule '$RotationSchedule' is invalid. Valid values: None, Daily, Hourly. Keeping current default."
+            $skipRotationSchedule = $true
+        }
+    }
+
     # Apply only the values that ended up being set -- don't overwrite module
     # defaults for parameters that were neither supplied nor present in the file.
-    # Null checks are used for the config file branch rather than truthiness so
-    # that legitimate zero values (e.g. MaxSizeMB = 0 to disable rotation) are
-    # not silently ignored.
-    if ($PSBoundParameters.ContainsKey('Path')             -or ($ConfigPath -and $null -ne $Path))             { $script:DefaultLogPath          = $Path }
-    if ($PSBoundParameters.ContainsKey('MaxSizeMB')        -or ($ConfigPath -and $null -ne $MaxSizeMB))        { $script:DefaultMaxSizeMB        = $MaxSizeMB }
-    if ($PSBoundParameters.ContainsKey('MutexTimeoutMs')   -or ($ConfigPath -and $null -ne $MutexTimeoutMs))   { $script:DefaultMutexTimeoutMs   = $MutexTimeoutMs }
-    if ($PSBoundParameters.ContainsKey('MinLevel')         -or ($ConfigPath -and $null -ne $MinLevel))         { $script:DefaultMinLevel         = $MinLevel.ToUpperInvariant() }
-    if ($PSBoundParameters.ContainsKey('RotationSchedule') -or ($ConfigPath -and $null -ne $RotationSchedule)) { $script:DefaultRotationSchedule = $RotationSchedule }
-    if ($PSBoundParameters.ContainsKey('RetainDays')       -or ($ConfigPath -and $null -ne $RetainDays))       { $script:DefaultRetainDays       = $RetainDays }
-    if ($PSBoundParameters.ContainsKey('RetainFiles')      -or ($ConfigPath -and $null -ne $RetainFiles))      { $script:DefaultRetainFiles      = $RetainFiles }
-    if ($PSBoundParameters.ContainsKey('IncludeCaller')    -or $includeCallerSetFromFile)                      { $script:DefaultIncludeCaller    = $IncludeCaller }
+    # String parameters use IsNullOrEmpty because unbound [string] params default
+    # to '' (empty string), not $null. Numeric params use $null -ne so that
+    # legitimate zero values (e.g. MaxSizeMB = 0 to disable rotation) are applied.
+    if ($PSBoundParameters.ContainsKey('Path')             -or ($ConfigPath -and -not [string]::IsNullOrEmpty($Path)))             { $script:DefaultLogPath          = $Path }
+    if ($PSBoundParameters.ContainsKey('MaxSizeMB')        -or ($ConfigPath -and $null -ne $MaxSizeMB))                           { $script:DefaultMaxSizeMB        = $MaxSizeMB }
+    if ($PSBoundParameters.ContainsKey('MutexTimeoutMs')   -or ($ConfigPath -and $null -ne $MutexTimeoutMs))                      { $script:DefaultMutexTimeoutMs   = $MutexTimeoutMs }
+    if (($PSBoundParameters.ContainsKey('MinLevel')         -or ($ConfigPath -and -not [string]::IsNullOrEmpty($MinLevel)))         -and -not $skipMinLevel)         { $script:DefaultMinLevel         = $MinLevel.ToUpperInvariant() }
+    if (($PSBoundParameters.ContainsKey('RotationSchedule') -or ($ConfigPath -and -not [string]::IsNullOrEmpty($RotationSchedule))) -and -not $skipRotationSchedule) { $script:DefaultRotationSchedule = $RotationSchedule }
+    if ($PSBoundParameters.ContainsKey('RetainDays')       -or ($ConfigPath -and $null -ne $RetainDays))                          { $script:DefaultRetainDays       = $RetainDays }
+    if ($PSBoundParameters.ContainsKey('RetainFiles')      -or ($ConfigPath -and $null -ne $RetainFiles))                         { $script:DefaultRetainFiles      = $RetainFiles }
+    if ($PSBoundParameters.ContainsKey('IncludeCaller')    -or $includeCallerSetFromFile)                                         { $script:DefaultIncludeCaller    = $IncludeCaller }
 
     # Log Analytics parameters
     if ($PSBoundParameters.ContainsKey('LogAnalyticsEnabled') -or $laEnabledSetFromFile) {
         $script:LogAnalyticsEnabled = $LogAnalyticsEnabled
         $laParamTouched = $true
     }
-    if ($PSBoundParameters.ContainsKey('CloudEnvironment')    -or ($ConfigPath -and $null -ne $CloudEnvironment)) {
+    if (($PSBoundParameters.ContainsKey('CloudEnvironment')    -or ($ConfigPath -and -not [string]::IsNullOrEmpty($CloudEnvironment))) -and -not $skipCloudEnvironment) {
         $script:CloudEnvironment = $CloudEnvironment
         $laParamTouched = $true
     }
-    if ($PSBoundParameters.ContainsKey('DcrEndpointUri')      -or ($ConfigPath -and $null -ne $DcrEndpointUri)) {
+    if ($PSBoundParameters.ContainsKey('DcrEndpointUri')      -or ($ConfigPath -and -not [string]::IsNullOrEmpty($DcrEndpointUri))) {
         $script:DcrEndpointUri = $DcrEndpointUri
         $laParamTouched = $true
     }
-    if ($PSBoundParameters.ContainsKey('DcrImmutableId')      -or ($ConfigPath -and $null -ne $DcrImmutableId)) {
+    if ($PSBoundParameters.ContainsKey('DcrImmutableId')      -or ($ConfigPath -and -not [string]::IsNullOrEmpty($DcrImmutableId))) {
         $script:DcrImmutableId = $DcrImmutableId
         $laParamTouched = $true
     }
-    if ($PSBoundParameters.ContainsKey('DcrStreamName')       -or ($ConfigPath -and $null -ne $DcrStreamName)) {
+    if ($PSBoundParameters.ContainsKey('DcrStreamName')       -or ($ConfigPath -and -not [string]::IsNullOrEmpty($DcrStreamName))) {
         $script:DcrStreamName = $DcrStreamName
         $laParamTouched = $true
     }
-    if ($PSBoundParameters.ContainsKey('TenantId')            -or ($ConfigPath -and $null -ne $TenantId)) {
+    if ($PSBoundParameters.ContainsKey('TenantId')            -or ($ConfigPath -and -not [string]::IsNullOrEmpty($TenantId))) {
         $script:TenantId = $TenantId
         $laParamTouched = $true
     }
-    if ($PSBoundParameters.ContainsKey('AppId')               -or ($ConfigPath -and $null -ne $AppId)) {
+    if ($PSBoundParameters.ContainsKey('AppId')               -or ($ConfigPath -and -not [string]::IsNullOrEmpty($AppId))) {
         $script:AppId = $AppId
         $laParamTouched = $true
     }
@@ -393,15 +419,15 @@ function Set-DJMLogConfig {
         }
         $laParamTouched = $true
     }
-    if ($PSBoundParameters.ContainsKey('CertificateSubject')  -or ($ConfigPath -and $null -ne $CertificateSubject)) {
+    if ($PSBoundParameters.ContainsKey('CertificateSubject')  -or ($ConfigPath -and -not [string]::IsNullOrEmpty($CertificateSubject))) {
         $script:CertificateSubject = $CertificateSubject
         $laParamTouched = $true
     }
-    if ($PSBoundParameters.ContainsKey('CertificateThumbprint') -or ($ConfigPath -and $null -ne $CertificateThumbprint)) {
+    if ($PSBoundParameters.ContainsKey('CertificateThumbprint') -or ($ConfigPath -and -not [string]::IsNullOrEmpty($CertificateThumbprint))) {
         $script:CertificateThumbprint = $CertificateThumbprint
         $laParamTouched = $true
     }
-    if ($PSBoundParameters.ContainsKey('BearerToken')         -or ($ConfigPath -and $null -ne $BearerToken)) {
+    if ($PSBoundParameters.ContainsKey('BearerToken')         -or ($ConfigPath -and -not [string]::IsNullOrEmpty($BearerToken))) {
         $script:BearerTokenExternal = $BearerToken
         $laParamTouched = $true
     }
