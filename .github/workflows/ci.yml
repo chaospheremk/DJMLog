@@ -7,7 +7,9 @@ on:
 jobs:
   changes:
     name: Detect Changes
+    if: github.actor != 'claude[bot]' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       pull-requests: read
@@ -32,8 +34,9 @@ jobs:
   lint:
     name: PSScriptAnalyzer
     needs: changes
-    if: needs.changes.outputs.powershell == 'true'
+    if: github.actor != 'claude[bot]' && github.actor != 'dependabot[bot]' && needs.changes.outputs.powershell == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -67,8 +70,9 @@ jobs:
   test:
     name: Pester Tests
     needs: changes
-    if: needs.changes.outputs.powershell == 'true'
+    if: github.actor != 'claude[bot]' && github.actor != 'dependabot[bot]' && needs.changes.outputs.powershell == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       checks: write
@@ -148,7 +152,9 @@ jobs:
 
   secret-scan:
     name: Secret Scan
+    if: github.actor != 'claude[bot]' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -161,9 +167,10 @@ jobs:
 
   ci-gate:
     name: CI Gate
-    if: always()
+    if: always() && github.actor != 'claude[bot]' && github.actor != 'dependabot[bot]'
     needs: [lint, test, secret-scan]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Check job results
         run: |
