@@ -43,6 +43,7 @@ After completing a work block: append to ../issues.md
 - All parameters use placeholders: `<tenant-id>` `<subscription-id>` etc.
 - Never modify files outside this code/ folder except the four memory files
   (../bugs.md, ../decisions.md, ../key-facts.md, ../issues.md)
+- Never make claims about code or APIs before investigating. Cite source file and line for every claim. It is acceptable and preferred to say you are uncertain.
 
 ## GitHub
 
