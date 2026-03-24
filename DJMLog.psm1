@@ -49,6 +49,11 @@ $script:AutoFlushDisabled       = $false
 # Serialises AppendAllText calls so parallel writers never contend on the file.
 $script:LogMutex = [System.Threading.Mutex]::new($false, 'DJMLog_WriteAccess')
 
+# Dispose mutex when module is removed to avoid OS resource leaks
+$MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
+    if ($script:LogMutex) { $script:LogMutex.Dispose() }
+}
+
 # Dot-source all private helpers then all public functions
 foreach ($file in (Get-ChildItem -Path "$PSScriptRoot\Private" -Filter '*.ps1')) { . $file.FullName }
 foreach ($file in (Get-ChildItem -Path "$PSScriptRoot\Public"  -Filter '*.ps1')) { . $file.FullName }

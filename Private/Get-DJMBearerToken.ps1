@@ -48,6 +48,10 @@ function Get-DJMBearerToken {
         DoD        = @{ LoginHost = 'login.microsoftonline.us';  Scope = 'https://monitor.azure.us//.default' }
     }
     $endpoints  = $cloudMap[$script:CloudEnvironment]
+    if (-not $endpoints) {
+        Write-Warning "Get-DJMBearerToken: unknown CloudEnvironment '$($script:CloudEnvironment)'. Valid values: Commercial, GCCHigh, DoD."
+        return $null
+    }
     $loginHost  = $endpoints.LoginHost
     $tokenScope = $endpoints.Scope
     $tokenUrl   = "https://$loginHost/$($script:TenantId)/oauth2/v2.0/token"
@@ -162,6 +166,10 @@ function Get-DJMBearerToken {
     # Acquire token
     try {
         $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $body -ContentType 'application/x-www-form-urlencoded' -ErrorAction Stop
+        if (-not $response.access_token -or -not $response.expires_in) {
+            Write-Warning 'Get-DJMBearerToken: token endpoint returned an incomplete response (missing access_token or expires_in).'
+            return $null
+        }
         $script:BearerToken = $response.access_token
         $script:TokenExpiry = [datetime]::UtcNow.AddSeconds($response.expires_in - 300)  # 5-min safety margin
         return $script:BearerToken

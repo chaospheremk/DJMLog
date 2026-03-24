@@ -380,4 +380,55 @@ Describe 'Set-DJMLogConfig' {
             InModuleScope DJMLog { $script:BearerTokenExternal } | Should -Be 'param-token'
         }
     }
+
+    Context 'Config file validation (VAL-1)' {
+
+        It 'warns and keeps default for invalid MinLevel in config file' {
+            $configFile = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-val-$([guid]::NewGuid().Guid).json"
+            try {
+                '{ "MinLevel": "TRACE" }' | Set-Content -LiteralPath $configFile
+                Set-DJMLogConfig -ConfigPath $configFile -WarningAction SilentlyContinue
+                InModuleScope DJMLog { $script:DefaultMinLevel } | Should -Be 'DEBUG'
+            }
+            finally {
+                Remove-Item -LiteralPath $configFile -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'warns and keeps default for invalid CloudEnvironment in config file' {
+            $configFile = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-val-$([guid]::NewGuid().Guid).json"
+            try {
+                '{ "CloudEnvironment": "FakeCloud" }' | Set-Content -LiteralPath $configFile
+                Set-DJMLogConfig -ConfigPath $configFile -WarningAction SilentlyContinue
+                InModuleScope DJMLog { $script:CloudEnvironment } | Should -Be 'GCCHigh'
+            }
+            finally {
+                Remove-Item -LiteralPath $configFile -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'warns and keeps default for invalid RotationSchedule in config file' {
+            $configFile = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-val-$([guid]::NewGuid().Guid).json"
+            try {
+                '{ "RotationSchedule": "Yearly" }' | Set-Content -LiteralPath $configFile
+                Set-DJMLogConfig -ConfigPath $configFile -WarningAction SilentlyContinue
+                InModuleScope DJMLog { $script:DefaultRotationSchedule } | Should -Be 'None'
+            }
+            finally {
+                Remove-Item -LiteralPath $configFile -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'accepts valid MinLevel from config file' {
+            $configFile = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-val-$([guid]::NewGuid().Guid).json"
+            try {
+                '{ "MinLevel": "WARN" }' | Set-Content -LiteralPath $configFile
+                Set-DJMLogConfig -ConfigPath $configFile
+                InModuleScope DJMLog { $script:DefaultMinLevel } | Should -Be 'WARN'
+            }
+            finally {
+                Remove-Item -LiteralPath $configFile -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }

@@ -87,7 +87,13 @@ function Send-DJMLogBuffer {
             CorrelationId = $entry['CorrelationId']
         }
         if ($entry.ContainsKey('Metadata') -and $null -ne $entry['Metadata']) {
-            $record['Metadata'] = $entry['Metadata'] | ConvertTo-Json -Compress -Depth 5
+            try {
+                $record['Metadata'] = $entry['Metadata'] | ConvertTo-Json -Compress -Depth 5
+            }
+            catch {
+                $record['Metadata'] = '<serialization error>'
+                Write-Warning "Send-DJMLogBuffer: failed to serialize Metadata for entry: $_"
+            }
         }
         $mapped.Add($record)
     }

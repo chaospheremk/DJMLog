@@ -175,4 +175,31 @@ Describe 'Send-DJMLogBuffer' {
             InModuleScope DJMLog { $script:FlushFailureCount } | Should -Be 0
         }
     }
+
+    Context 'Batch chunking over 500 KB' {
+
+        BeforeEach {
+            Mock Invoke-RestMethod -ModuleName DJMLog { }
+        }
+
+        It 'splits large buffers into multiple REST calls' {
+            InModuleScope DJMLog {
+                # Each entry with a ~10 KB message ensures we exceed 500 KB with ~60 entries
+                $bigMessage = 'X' * 10000
+                foreach ($i in 1..60) {
+                    $script:LogBuffer.Add(@{
+                        UtcTimestamp  = '2026-01-01T00:00:00Z'
+                        Level         = 'INFO'
+                        Message       = $bigMessage
+                        CorrelationId = 'cid-chunk'
+                    })
+                }
+            }
+
+            Send-DJMLogBuffer
+
+            Should -Invoke -CommandName Invoke-RestMethod -ModuleName DJMLog -Times 2 -Because 'buffer exceeds 500 KB and should be split into at least 2 batches'
+            InModuleScope DJMLog { $script:LogBuffer.Count } | Should -Be 0
+        }
+    }
 }

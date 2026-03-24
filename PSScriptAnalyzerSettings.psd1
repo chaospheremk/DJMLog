@@ -12,7 +12,7 @@
     }
 
     ExcludeRules = @(
-        # UTF-8 without BOM is valid; em dashes in help comments are intentional.
+        # UTF-8 without BOM is our standard; exclude the rule that enforces BOM.
         'PSUseBOMForUnicodeEncodedFile'
 
         # Write-Host is intentional for -Colorize console output and CSV confirmation.

@@ -346,4 +346,49 @@ Describe 'Read-DJMLog' {
             }
         }
     }
+
+    Context '-Colorize respects -First and -Last slicing' {
+
+        It 'colorizes only the last N entries, not the full set' {
+            # Write 10 entries to a temp file
+            $tempLog = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-colorize-$([guid]::NewGuid().Guid).jsonl"
+            try {
+                Set-DJMLogConfig -Path $tempLog
+                foreach ($i in 1..10) {
+                    Write-DJMLog -Message "Entry $i" -Level INFO
+                }
+
+                # Capture Write-Host calls via -Colorize -Last 3
+                $hostOutput = [System.Collections.Generic.List[string]]::new()
+                Mock Write-Host { $hostOutput.Add($Object) } -ModuleName DJMLog
+
+                $results = Read-DJMLog -LogPath $tempLog -Colorize -Last 3 -PassThru
+                $results.Count | Should -Be 3
+                $hostOutput.Count | Should -Be 3
+            }
+            finally {
+                Remove-Item -LiteralPath $tempLog -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'colorizes only the first N entries, not the full set' {
+            $tempLog = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-colorize-$([guid]::NewGuid().Guid).jsonl"
+            try {
+                Set-DJMLogConfig -Path $tempLog
+                foreach ($i in 1..10) {
+                    Write-DJMLog -Message "Entry $i" -Level INFO
+                }
+
+                $hostOutput = [System.Collections.Generic.List[string]]::new()
+                Mock Write-Host { $hostOutput.Add($Object) } -ModuleName DJMLog
+
+                $results = Read-DJMLog -LogPath $tempLog -Colorize -First 2 -PassThru
+                $results.Count | Should -Be 2
+                $hostOutput.Count | Should -Be 2
+            }
+            finally {
+                Remove-Item -LiteralPath $tempLog -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }
