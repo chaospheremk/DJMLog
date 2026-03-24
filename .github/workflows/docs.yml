@@ -10,6 +10,7 @@ on:
       - 'requirements.txt'
       - 'DJMLog.psd1'
       - 'Public/**'
+      - 'Private/**'
       - '.github/workflows/docs.yml'
 
 permissions:
