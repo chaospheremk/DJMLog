@@ -16,9 +16,9 @@ jobs:
     outputs:
       powershell: ${{ steps.filter.outputs.powershell }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -40,10 +40,10 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache PowerShell modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/powershell/Modules
           key: ps-lint-${{ hashFiles('.github/workflows/ci.yml') }}
@@ -77,10 +77,10 @@ jobs:
       contents: read
       checks: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache PowerShell modules
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.local/share/powershell/Modules
           key: ps-test-${{ hashFiles('.github/workflows/ci.yml') }}
@@ -130,7 +130,7 @@ jobs:
 
       - name: Publish test results
         if: always()
-        uses: dorny/test-reporter@v2
+        uses: dorny/test-reporter@v3
         with:
           name: Pester Tests
           path: TestResults.xml
@@ -138,14 +138,14 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: test-results
           path: TestResults.xml
 
       - name: Upload coverage results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-results
           path: CoverageResults.xml
@@ -156,7 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
