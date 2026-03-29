@@ -4,7 +4,7 @@ external help file: DJMLog-Help.xml
 HelpUri: ''
 Locale: en-US
 Module Name: DJMLog
-ms.date: 03/08/2026
+ms.date: 03/28/2026
 PlatyPS schema version: 2024-05-01
 title: Write-DJMLog
 ---
@@ -39,67 +39,98 @@ Write-DJMLog -Message <string> [-Level <string>] [-CorrelationId <string>] [-Log
 ## ALIASES
 
 None.
-
 ## DESCRIPTION
 
-Writes one JSON object per call to the target file, appending a newline after each entry. The log directory is created automatically if it does not exist. All timestamps are ISO 8601 UTC. Writes use `[System.IO.File]::AppendAllText` for a shorter file lock window, reducing collision risk when multiple runspaces write to the same file.
+Writes one JSON object per call to the target file, appending a newline
+after each entry.
+The log directory is created automatically if it does
+not exist.
+All timestamps are ISO 8601 UTC.
+Writes use
+[System.IO.File]::AppendAllText for a shorter file lock window, reducing
+collision risk when multiple runspaces write to the same file.
 
 Each log entry always contains:
+    UtcTimestamp  — ISO 8601 UTC timestamp of the write
+    Level         — Severity level, uppercased
+    Message       — The provided message string
+    CorrelationId — GUID string linking related entries
 
-- **UtcTimestamp** — ISO 8601 UTC timestamp of the write
-- **Level** — Severity level, uppercased
-- **Message** — The provided message string
-- **CorrelationId** — GUID string linking related entries
+Minimum level filtering:
+    When a module-level MinLevel has been configured via Set-DJMLogConfig
+    (or -MinLevel is passed per-call), entries whose level falls below the
+    threshold are silently discarded without acquiring the mutex or touching
+    the file.
+Level order: DEBUG < INFO < WARN < ERROR.
 
-**Minimum level filtering:**
-When a module-level MinLevel has been configured via Set-DJMLogConfig (or -MinLevel is passed per-call), entries whose level falls below the threshold are silently discarded without acquiring the mutex or touching the file. Level order: DEBUG < INFO < WARN < ERROR.
+When -Metadata is provided, its key-value pairs are written under a
+nested Metadata object.
+Hashtables and PSCustomObjects are both supported.
+Any other type is stored under Metadata.RawValue.
 
-When -Metadata is provided, its key-value pairs are written under a nested Metadata object. Hashtables and PSCustomObjects are both supported. Any other type is stored under Metadata.RawValue.
+Caller auto-capture:
+    By default, Write-DJMLog captures the calling script name, function
+    name, and line number from the PowerShell call stack and stores them
+    under Metadata.Caller.
+Use -NoCaller to suppress this for a single
+    call, or Set-DJMLogConfig -IncludeCaller $false to disable globally.
+    A user-supplied Metadata.Caller value is never overwritten.
 
-**Caller auto-capture:**
-By default, Write-DJMLog captures the calling script name, function name, and line number from the PowerShell call stack and stores them under Metadata.Caller. Use -NoCaller to suppress this for a single call, or `Set-DJMLogConfig -IncludeCaller $false` to disable globally. A user-supplied Metadata.Caller value is never overwritten.
+When -ErrorObject is provided alongside -Level ERROR, error context is
+captured under Metadata.Error with the following fields:
+    ScriptName      — Path of the script where the error originated
+    LineNumber      — Line number within that script
+    Command         — Name of the command that threw
+    PositionMessage — First line of the invocation position message
+    Type            — Full exception type name
+    Message         — Exception message text
 
-When -ErrorObject is provided alongside -Level ERROR, error context is captured under Metadata.Error with the following fields:
+Log rotation:
+    Size-based: when -MaxSizeMB is greater than zero (or a module-level
+    maximum has been configured via Set-DJMLogConfig), Write-DJMLog checks
+    the current file size at the start of each call.
+If the file meets or
+    exceeds the threshold, it is rotated.
 
-- **ScriptName** — Path of the script where the error originated
-- **LineNumber** — Line number within that script
-- **Command** — Name of the command that threw
-- **PositionMessage** — First line of the invocation position message
-- **Type** — Full exception type name
-- **Message** — Exception message text
+    Time-based: when -RotationSchedule is Daily or Hourly (or configured
+    via Set-DJMLogConfig), the file's UTC creation time is compared to the
+    current period.
+If the file was created in a prior day or hour, it is
+    rotated before writing.
 
-**Log rotation:**
+    The rotated file name uses the pattern:
+    <basename>_yyyyMMdd-HHmmss<extension>
 
-- **Size-based:** when -MaxSizeMB is greater than zero (or a module-level maximum has been configured via Set-DJMLogConfig), Write-DJMLog checks the current file size at the start of each call. If the file meets or exceeds the threshold, it is rotated.
-- **Time-based:** when -RotationSchedule is Daily or Hourly (or configured via Set-DJMLogConfig), the file's UTC creation time is compared to the current period. If the file was created in a prior day or hour, it is rotated before writing.
-- The rotated file name uses the pattern: `<basename>_yyyyMMdd-HHmmss<extension>`
+Retention cleanup (runs only after a rotation):
+    -RetainDays N  — deletes rotated files older than N days.
+    -RetainFiles N — keeps only the N most recent rotated files.
+    Both can be used together; RetainDays runs first.
+    Set either to 0 (the default) to keep all rotated files.
 
-**Retention cleanup** (runs only after a rotation):
+A non-terminating warning is emitted if the file cannot be written, if the
+mutex timeout expires before the write lock can be acquired, or if
+-ErrorObject is supplied without -Level ERROR.
 
-- `-RetainDays N` — deletes rotated files older than N days.
-- `-RetainFiles N` — keeps only the N most recent rotated files.
-- Both can be used together; RetainDays runs first.
-- Set either to 0 (the default) to keep all rotated files.
-
-A non-terminating warning is emitted if the file cannot be written, if the mutex timeout expires before the write lock can be acquired, or if -ErrorObject is supplied without -Level ERROR.
-
-**Parallel safety:**
-All writes are serialised through a named system mutex (`DJMLog_WriteAccess`). The mutex is a kernel object, so it coordinates correctly across PowerShell runspaces that do not share memory. Each call acquires the mutex, performs the AppendAllText, and immediately releases it, keeping the lock window as short as possible.
+Parallel safety:
+    All writes are serialised through a named system mutex
+    ('DJMLog_WriteAccess').
+The mutex is a kernel object, so it coordinates
+    correctly across PowerShell runspaces that do not share memory.
+Each
+    call acquires the mutex, performs the AppendAllText, and immediately
+    releases it, keeping the lock window as short as possible.
 
 ## EXAMPLES
 
 ### EXAMPLE 1
 
-```powershell
 # Basic usage with a shared correlation ID across an operation
 $cid = (New-Guid).Guid
 Write-DJMLog -Message 'Sync started' -Level INFO -CorrelationId $cid
 Write-DJMLog -Message 'Sync completed' -Level INFO -CorrelationId $cid
-```
 
 ### EXAMPLE 2
 
-```powershell
 # Attach structured metadata to an entry
 $cid = (New-Guid).Guid
 Write-DJMLog -Message 'User provisioned' -Level INFO -CorrelationId $cid -Metadata @{
@@ -107,11 +138,9 @@ Write-DJMLog -Message 'User provisioned' -Level INFO -CorrelationId $cid -Metada
     Department        = 'Engineering'
     LicenseSku        = 'ENTERPRISEPREMIUM'
 }
-```
 
 ### EXAMPLE 3
 
-```powershell
 # Capture a terminating error with full invocation context
 $cid = (New-Guid).Guid
 try {
@@ -120,29 +149,22 @@ try {
 catch {
     Write-DJMLog -Message 'Failed to read config file' -Level ERROR -ErrorObject $_ -CorrelationId $cid
 }
-```
 
 ### EXAMPLE 4
 
-```powershell
 # Use PassThru to capture the entry object while writing
 $entry = Write-DJMLog -Message 'Provisioning started' -Level INFO -PassThru
-```
 
 ### EXAMPLE 5
 
-```powershell
 # Configure rotation once via Set-DJMLogConfig; all subsequent calls honour it
 Set-DJMLogConfig -Path 'C:\Logs\app.jsonl' -MaxSizeMB 100
 Write-DJMLog -Message 'Entry after rotation check'
-```
 
 ### EXAMPLE 6
 
-```powershell
 # Per-call level override — suppress this entry when module threshold is lower
 Write-DJMLog -Message 'Verbose diagnostic' -Level DEBUG -MinLevel DEBUG
-```
 
 ## PARAMETERS
 
@@ -644,15 +666,15 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## INPUTS
 
-None. This cmdlet does not accept pipeline input.
-
 ## OUTPUTS
 
 ### None by default. PSCustomObject when -PassThru is specified.
 
-Returns nothing by default. When -PassThru is specified, returns the log entry as a PSCustomObject.
+
 
 ## NOTES
 
 ## RELATED LINKS
+
+
 

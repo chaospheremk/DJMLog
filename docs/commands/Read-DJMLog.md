@@ -4,7 +4,7 @@ external help file: DJMLog-Help.xml
 HelpUri: ''
 Locale: en-US
 Module Name: DJMLog
-ms.date: 03/08/2026
+ms.date: 03/28/2026
 PlatyPS schema version: 2024-05-01
 title: Read-DJMLog
 ---
@@ -29,82 +29,92 @@ Read-DJMLog [[-LogPath] <string>] [[-Level] <string[]>] [[-CorrelationId] <strin
 ## ALIASES
 
 None.
-
 ## DESCRIPTION
 
-Streams the target file line by line using `[System.IO.File]::ReadLines`, keeping memory usage flat regardless of file size. Each line is parsed as a JSON object. Lines that cannot be parsed, have an invalid timestamp, or are missing Level or Message are skipped with a warning.
+Streams the target file line by line using [System.IO.File]::ReadLines,
+keeping memory usage flat regardless of file size.
+Each line is parsed
+as a JSON object.
+Lines that cannot be parsed, have an invalid timestamp,
+or are missing Level or Message are skipped with a warning.
 
-Filtering is applied before object construction. All active filters must match for an entry to be included. -First and -Last are applied after all other filters have been evaluated. -First and -Last cannot be combined; if both are supplied, -First is honoured and a warning is emitted.
+Filtering is applied before object construction.
+All active filters must
+match for an entry to be included.
+-First and -Last are applied after all
+other filters have been evaluated.
+-First and -Last cannot be combined;
+if both are supplied, -First is honoured and a warning is emitted.
 
-**Metadata flattening:**
-Nested Metadata properties are recursively promoted to top-level columns using underscore-separated key paths. Flattening descends through all levels of nesting. For example:
+Metadata flattening:
+    Nested Metadata properties are recursively promoted to top-level
+    columns using underscore-separated key paths.
+Flattening descends
+    through all levels of nesting.
+For example:
+        Metadata.Error.Message      -> Error_Message
+        Metadata.Http.Response.Code -> Http_Response_Code
 
-- `Metadata.Error.Message` becomes `Error_Message`
-- `Metadata.Http.Response.Code` becomes `Http_Response_Code`
+Column normalisation:
+    All returned objects are padded with $null for any column not present
+    in that specific entry, so every object in the output shares an
+    identical property set.
+Column order reflects first-seen insertion
+    order across the result set after -First or -Last slicing.
 
-**Column normalisation:**
-All returned objects are padded with `$null` for any column not present in that specific entry, so every object in the output shares an identical property set. Column order reflects first-seen insertion order across the result set after -First or -Last slicing.
+Output timestamps:
+    LocalTime — entry timestamp converted to the local timezone
+    UtcTime   — entry timestamp in UTC
 
-**Output timestamps:**
-
-- **LocalTime** — entry timestamp converted to the local timezone
-- **UtcTime** — entry timestamp in UTC
-
-**Output behaviour:**
-By default, PSCustomObjects are emitted to the pipeline. When -Colorize, -ExportCsv, or -OutGridView are specified, pipeline output is suppressed unless -PassThru is also present. When -Raw is specified, the unmodified JSON strings are emitted to the pipeline instead of objects. -Colorize, -ExportCsv, and -OutGridView still operate on the parsed objects regardless of -Raw.
+Output behaviour:
+    By default, PSCustomObjects are emitted to the pipeline.
+When
+    -Colorize, -ExportCsv, or -OutGridView are specified, pipeline output
+    is suppressed unless -PassThru is also present.
+When -Raw is specified,
+    the unmodified JSON strings are emitted to the pipeline instead of
+    objects.
+-Colorize, -ExportCsv, and -OutGridView still operate on the
+    parsed objects regardless of -Raw.
 
 ## EXAMPLES
 
 ### EXAMPLE 1
 
-```powershell
 # Return all ERROR entries as objects
 $errors = Read-DJMLog -Level ERROR
 $errors | Select-Object LocalTime, Message, Error_Message
-```
 
 ### EXAMPLE 2
 
-```powershell
 # Colorized console view filtered by level and time window
 Read-DJMLog -Level WARN, ERROR -Since (Get-Date).AddHours(-4) -Colorize
-```
 
 ### EXAMPLE 3
 
-```powershell
 # Filter by message content and export to CSV
 Read-DJMLog -MessageContains 'provisioning' -ExportCsv -CsvPath C:\Reports\provision.csv
-```
 
 ### EXAMPLE 4
 
-```powershell
 # Colorize to console and also capture results for further processing
 $results = Read-DJMLog -Level ERROR -Colorize -PassThru
 $results | Group-Object CorrelationId | Where-Object { $_.Count -gt 1 }
-```
 
 ### EXAMPLE 5
 
-```powershell
 # Retrieve all entries for a specific operation by correlation ID
 Read-DJMLog -CorrelationId $cid | Format-Table LocalTime, Level, Message
-```
 
 ### EXAMPLE 6
 
-```powershell
 # Show the 20 most recent entries interactively on Windows
 Read-DJMLog -Last 20 -OutGridView
-```
 
 ### EXAMPLE 7
 
-```powershell
 # Emit raw JSON strings for forwarding or external processing
 Read-DJMLog -Level ERROR -Raw | Set-Content -LiteralPath C:\export\errors.jsonl
-```
 
 ## PARAMETERS
 
@@ -448,15 +458,15 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## INPUTS
 
-None. This cmdlet does not accept pipeline input.
-
 ## OUTPUTS
 
 ### PSCustomObject by default. String when -Raw is specified.
 
-Returns deserialized log entries as PSCustomObjects with flattened metadata, or raw JSONL strings when -Raw is specified.
+
 
 ## NOTES
 
 ## RELATED LINKS
+
+
 
