@@ -4,7 +4,7 @@ external help file: DJMLog-Help.xml
 HelpUri: ''
 Locale: en-US
 Module Name: DJMLog
-ms.date: 03/08/2026
+ms.date: 03/28/2026
 PlatyPS schema version: 2024-05-01
 title: Set-DJMLogConfig
 ---
@@ -33,47 +33,53 @@ Set-DJMLogConfig [[-Path] <string>] [[-MaxSizeMB] <double>] [[-MutexTimeoutMs] <
 ## ALIASES
 
 None.
-
 ## DESCRIPTION
 
-Sets module-scoped defaults so that Write-DJMLog and Read-DJMLog callers do not need to supply -LogPath, -MaxSizeMB, or -MutexTimeoutMs on every call. Also configures Azure Log Analytics integration settings for Send-DJMLogBuffer. Settings can be provided directly as parameters, loaded from a JSON config file via -ConfigPath, or both.
+Sets module-scoped defaults so that Write-DJMLog and Read-DJMLog callers
+do not need to supply -LogPath, -MaxSizeMB, or -MutexTimeoutMs on every
+call.
+Also configures Azure Log Analytics integration settings for
+Send-DJMLogBuffer.
+Settings can be provided directly as parameters, loaded
+from a JSON config file via -ConfigPath, or both.
 
 Precedence when both -ConfigPath and explicit parameters are supplied:
+    Explicit parameter > config file value > existing module default
 
-> Explicit parameter > config file value > existing module default
+Only properties present in the config file are applied.
+Missing properties
+leave the corresponding module default unchanged.
+The same rule applies to
+explicit parameters -- omitting a parameter does not reset its module default.
 
-Only properties present in the config file are applied. Missing properties leave the corresponding module default unchanged. The same rule applies to explicit parameters — omitting a parameter does not reset its module default.
-
-When any Log Analytics parameter is set, the circuit breaker state is reset (FlushFailureCount = 0, AutoFlushDisabled = $false).
+When any Log Analytics parameter is set, the circuit breaker state is reset
+(FlushFailureCount = 0, AutoFlushDisabled = $false).
 
 Config file schema (all properties optional):
-
-```json
-{
-    "Path":                  "C:\\Logs\\automation.jsonl",
-    "MaxSizeMB":            50,
-    "MutexTimeoutMs":       2000,
-    "MinLevel":             "INFO",
-    "RotationSchedule":     "Daily",
-    "RetainDays":           30,
-    "RetainFiles":          10,
-    "IncludeCaller":        true,
-    "LogAnalyticsEnabled":  true,
-    "CloudEnvironment":     "GCCHigh",
-    "DcrEndpointUri":       "https://my-dce.eastus.ingest.monitor.azure.us",
-    "DcrImmutableId":       "dcr-abc123",
-    "DcrStreamName":        "Custom-MyTable_CL",
-    "TenantId":             "00000000-0000-0000-0000-000000000000",
-    "AppId":                "00000000-0000-0000-0000-000000000000",
-    "AppSecret":            "secret",
-    "CertificateSubject":   "CN=DJMLog-Auth",
-    "CertificateThumbprint":"AABBCC...",
-    "BearerToken":          "eyJ...",
-    "FlushThreshold":       100,
-    "MaxBufferSize":        5000,
-    "MaxFlushRetries":      3
-}
-```
+    {
+        "Path":                  "C:\\Logs\\automation.jsonl",
+        "MaxSizeMB":            50,
+        "MutexTimeoutMs":       2000,
+        "MinLevel":             "INFO",
+        "RotationSchedule":     "Daily",
+        "RetainDays":           30,
+        "RetainFiles":          10,
+        "IncludeCaller":        true,
+        "LogAnalyticsEnabled":  true,
+        "CloudEnvironment":     "GCCHigh",
+        "DcrEndpointUri":       "https://my-dce.eastus.ingest.monitor.azure.us",
+        "DcrImmutableId":       "dcr-abc123",
+        "DcrStreamName":        "Custom-MyTable_CL",
+        "TenantId":             "00000000-0000-0000-0000-000000000000",
+        "AppId":                "00000000-0000-0000-0000-000000000000",
+        "AppSecret":            "secret",
+        "CertificateSubject":   "CN=DJMLog-Auth",
+        "CertificateThumbprint":"AABBCC...",
+        "BearerToken":          "eyJ...",
+        "FlushThreshold":       100,
+        "MaxBufferSize":        5000,
+        "MaxFlushRetries":      3
+    }
 
 Unknown properties in the config file are silently ignored.
 
@@ -81,59 +87,55 @@ Unknown properties in the config file are silently ignored.
 
 ### EXAMPLE 1
 
-```powershell
 # Configure directly with parameters
 Set-DJMLogConfig -Path 'C:\Logs\automation.jsonl' -MaxSizeMB 50
-```
 
 ### EXAMPLE 2
 
-```powershell
 # Load all settings from a config file
 Set-DJMLogConfig -ConfigPath 'C:\Config\logconfig.json'
-```
 
 ### EXAMPLE 3
 
-```powershell
 # Load from file but override the path for this environment
 Set-DJMLogConfig -ConfigPath 'C:\Config\logconfig.json' -Path 'D:\Logs\automation.jsonl'
-```
 
 ### EXAMPLE 4
 
-```powershell
 # Only write WARN and above; rotate daily; keep last 14 rotated files
 Set-DJMLogConfig -MinLevel WARN -RotationSchedule Daily -RetainFiles 14
-```
 
 ### EXAMPLE 5
 
-```powershell
 # Disable automatic caller capture
 Set-DJMLogConfig -IncludeCaller $false
-```
 
 ### EXAMPLE 6
 
-```powershell
 # Enable Log Analytics with certificate authentication
-Set-DJMLogConfig -LogAnalyticsEnabled $true -CloudEnvironment GCCHigh `
-    -DcrEndpointUri 'https://my-dce.eastus.ingest.monitor.azure.us' `
-    -DcrImmutableId 'dcr-abc123' -DcrStreamName 'Custom-MyTable_CL' `
-    -TenantId '00000000-...' -AppId '11111111-...' `
-    -CertificateSubject 'CN=DJMLog-Auth'
-```
+$params = @{
+    LogAnalyticsEnabled = $true
+    CloudEnvironment    = 'GCCHigh'
+    DcrEndpointUri      = 'https://my-dce.eastus.ingest.monitor.azure.us'
+    DcrImmutableId      = 'dcr-abc123'
+    DcrStreamName       = 'Custom-MyTable_CL'
+    TenantId            = '00000000-...'
+    AppId               = '11111111-...'
+    CertificateSubject  = 'CN=DJMLog-Auth'
+}
+Set-DJMLogConfig @params
 
 ### EXAMPLE 7
 
-```powershell
 # Enable Log Analytics with a pre-acquired bearer token
-Set-DJMLogConfig -LogAnalyticsEnabled $true `
-    -DcrEndpointUri 'https://my-dce.eastus.ingest.monitor.azure.us' `
-    -DcrImmutableId 'dcr-abc123' -DcrStreamName 'Custom-MyTable_CL' `
-    -BearerToken $myToken
-```
+$params = @{
+    LogAnalyticsEnabled = $true
+    DcrEndpointUri      = 'https://my-dce.eastus.ingest.monitor.azure.us'
+    DcrImmutableId      = 'dcr-abc123'
+    DcrStreamName       = 'Custom-MyTable_CL'
+    BearerToken         = $myToken
+}
+Set-DJMLogConfig @params
 
 ## PARAMETERS
 
@@ -690,12 +692,11 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## INPUTS
 
-None. This cmdlet does not accept pipeline input.
-
 ## OUTPUTS
 
 ## NOTES
 
 ## RELATED LINKS
+
 
 

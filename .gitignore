@@ -5,8 +5,9 @@
 *.jsonl
 *.csv
 
-# Pester XML output (if -OutputFile is ever used)
-testResults*.xml
+# Pester and coverage XML output
+TestResults.xml
+CoverageResults.xml
 
 # Windows Explorer artefacts
 Thumbs.db
@@ -21,8 +22,8 @@ desktop.ini
 # PlatyPS MAML output (generated in CI only)
 en-US/
 
-# PlatyPS markdown command docs (generated in CI only)
-docs/commands/
+# Invoke-Build output directory
+output/
 
 # MkDocs build output (generated in CI only)
 site/
