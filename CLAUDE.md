@@ -168,9 +168,21 @@ Import via manifest: `Import-Module ./DJMLog.psd1 -Force`
 # Import via manifest
 Import-Module ./DJMLog.psd1 -Force
 
-# Run PSScriptAnalyzer
-Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+# Invoke-Build tasks (preferred — matches CI)
+Invoke-Build Build                     # Full pipeline: Clean → Lint → Test → Docs
+Invoke-Build Lint                      # PSScriptAnalyzer only
+Invoke-Build Test                      # Pester only (unit, no coverage)
+Invoke-Build Test -Configuration Release  # Pester with coverage + threshold check
+Invoke-Build Docs                      # Regenerate PlatyPS docs in docs/commands/
+Invoke-Build AssertDocsClean           # Verify committed docs match fresh generation
+Invoke-Build BumpVersion               # Increment patch version in manifest
+Invoke-Build Pack                      # Assemble output/ directory
+Invoke-Build ?                         # Show all tasks and dependencies
 
-# Run Pester tests
+# Install pre-push hook (one-time)
+./scripts/Install-GitHooks.ps1
+
+# Direct tool access (when not using Invoke-Build)
+Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
 Invoke-Pester ./tests/ -Output Detailed
 ```

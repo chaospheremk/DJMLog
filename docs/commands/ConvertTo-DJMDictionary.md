@@ -4,7 +4,7 @@ external help file: DJMLog-Help.xml
 HelpUri: ''
 Locale: en-US
 Module Name: DJMLog
-ms.date: 03/08/2026
+ms.date: 01/01/1970
 PlatyPS schema version: 2024-05-01
 title: ConvertTo-DJMDictionary
 ---
@@ -32,37 +32,38 @@ ConvertTo-DJMDictionary -Hashtable <hashtable> [<CommonParameters>]
 ## ALIASES
 
 None.
-
 ## DESCRIPTION
 
 Accepts input via two mutually exclusive parameter sets:
 
-**FromObjectList:**
-Each PSObject (piped or passed directly) is added to the dictionary using the value of the specified property as its key. Keys are trimmed and lowercased before insertion. Duplicate keys emit a non-terminating error and the second object is discarded.
+  FromObjectList
+      Each PSObject (piped or passed directly) is added to the dictionary
+      using the value of the specified property as its key.
+Keys are
+      trimmed and lowercased before insertion.
+Duplicate keys emit a
+      non-terminating error and the second object is discarded.
 
-**FromHashtable:**
-Each key-value pair in the hashtable is copied into the dictionary as-is, with no key transformation applied.
+  FromHashtable
+      Each key-value pair in the hashtable is copied into the dictionary
+      as-is, with no key transformation applied.
 
 ## EXAMPLES
 
 ### EXAMPLE 1
 
-```powershell
 # Build a lookup from an AD query
 $userIndex = Get-ADUser -Filter * -Properties Department |
     ConvertTo-DJMDictionary -KeyProperty 'SamAccountName'
 $userIndex['jsmith'].Department
-```
 
 ### EXAMPLE 2
 
-```powershell
 # Convert a hashtable of config values
 $config = ConvertTo-DJMDictionary -Hashtable @{
     Environment = 'Production'
     Region      = 'UKSouth'
 }
-```
 
 ## PARAMETERS
 
@@ -146,15 +147,17 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ### System.Management.Automation.PSObject
 
-A list of PSObjects or a hashtable to convert.
+
 
 ## OUTPUTS
 
-### System.Collections.Generic.Dictionary[string, PSObject]
+### System.Collections.Generic.Dictionary[string
 
-A dictionary with lowercase string keys mapped to PSObject values.
+
 
 ## NOTES
 
 ## RELATED LINKS
+
+
 

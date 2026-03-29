@@ -4,7 +4,7 @@ external help file: DJMLog-Help.xml
 HelpUri: ''
 Locale: en-US
 Module Name: DJMLog
-ms.date: 03/08/2026
+ms.date: 01/01/1970
 PlatyPS schema version: 2024-05-01
 title: ConvertTo-DJMOrderedPSObject
 ---
@@ -26,23 +26,25 @@ ConvertTo-DJMOrderedPSObject [-Dictionary] <IDictionary> [<CommonParameters>]
 ## ALIASES
 
 None.
-
 ## DESCRIPTION
 
-Iterates the source dictionary's keys in enumeration order, copies each key-value pair into an `[ordered]` hashtable, and casts the result to PSCustomObject. The property order of the returned object matches the key enumeration order of the input dictionary.
+Iterates the source dictionary's keys in enumeration order, copies each
+key-value pair into an [ordered] hashtable, and casts the result to
+PSCustomObject.
+The property order of the returned object matches the
+key enumeration order of the input dictionary.
 
-Accepts any type implementing IDictionary, including Hashtable, OrderedDictionary, and `Dictionary[string, PSObject]`.
+Accepts any type implementing IDictionary, including Hashtable,
+OrderedDictionary, and Dictionary[string, PSObject].
 
 ## EXAMPLES
 
 ### EXAMPLE 1
 
-```powershell
 # Convert a generic dictionary returned by ConvertTo-DJMDictionary
 $dict   = ConvertTo-DJMDictionary -Hashtable @{ Name = 'Prod'; Region = 'UKSouth' }
 $object = ConvertTo-DJMOrderedPSObject -Dictionary $dict
 $object | Format-List
-```
 
 ## PARAMETERS
 
@@ -76,15 +78,15 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## INPUTS
 
-None. This cmdlet does not accept pipeline input.
-
 ## OUTPUTS
 
-### System.Management.Automation.PSObject
+### PSCustomObject
 
-A PSCustomObject with properties in the same order as the source dictionary keys.
+
 
 ## NOTES
 
 ## RELATED LINKS
+
+
 
