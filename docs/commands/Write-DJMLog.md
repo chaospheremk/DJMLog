@@ -4,7 +4,7 @@ external help file: DJMLog-Help.xml
 HelpUri: ''
 Locale: en-US
 Module Name: DJMLog
-ms.date: 03/28/2026
+ms.date: 01/01/1970
 PlatyPS schema version: 2024-05-01
 title: Write-DJMLog
 ---

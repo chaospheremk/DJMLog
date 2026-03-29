@@ -107,14 +107,16 @@ task Docs {
         Remove-Item $subDir -Force
     }
 
-    # Post-process: strip PlatyPS v2 placeholder text
-    foreach ($file in Get-ChildItem $DocsDir -Filter *.md) {
-        $content = Get-Content $file.FullName -Raw
+    # Post-process: strip PlatyPS v2 placeholder text and normalize date stamps
+    foreach ($filePath in (Get-ChildItem $DocsDir -Filter *.md).FullName) {
+        $content = [System.IO.File]::ReadAllText($filePath)
         $cleaned = $content -replace '(?m)^This cmdlet has the following aliases,\s*\r?\n\s*\{\{Insert list of aliases\}\}\s*$', 'None.'
         $cleaned = $cleaned -replace '\{\{\s*Fill in the related links here\s*\}\}', ''
         $cleaned = $cleaned -replace '\{\{[^}]+\}\}', ''
+        # PlatyPS embeds ms.date with today's date — normalize to prevent cross-day diffs
+        $cleaned = $cleaned -replace '(?m)^ms\.date:\s*\d{2}/\d{2}/\d{4}', 'ms.date: 01/01/1970'
         if ($cleaned -ne $content) {
-            Set-Content $file.FullName $cleaned -NoNewline
+            [System.IO.File]::WriteAllText($filePath, $cleaned)
         }
     }
 
@@ -165,6 +167,7 @@ task AssertDocsClean {
             $cleaned = $content -replace '(?m)^This cmdlet has the following aliases,\s*\r?\n\s*\{\{Insert list of aliases\}\}\s*$', 'None.'
             $cleaned = $cleaned -replace '\{\{\s*Fill in the related links here\s*\}\}', ''
             $cleaned = $cleaned -replace '\{\{[^}]+\}\}', ''
+            $cleaned = $cleaned -replace '(?m)^ms\.date:\s*\d{2}/\d{2}/\d{4}', 'ms.date: 01/01/1970'
             if ($cleaned -ne $content) {
                 Set-Content $file.FullName $cleaned -NoNewline
             }
@@ -186,8 +189,20 @@ task AssertDocsClean {
 
         Remove-Module $ModuleName -Force
 
+        # Normalize committed docs to a temp copy so ms.date differences don't cause false failures
+        $committedTemp = Join-Path ([System.IO.Path]::GetTempPath()) "docs-committed-$(New-Guid)"
+        New-Item $committedTemp -ItemType Directory | Out-Null
+        Copy-Item (Join-Path $DocsDir '*.md') $committedTemp
+        foreach ($file in Get-ChildItem $committedTemp -Filter *.md) {
+            $content = Get-Content $file.FullName -Raw
+            $cleaned = $content -replace '(?m)^ms\.date:\s*\d{2}/\d{2}/\d{4}', 'ms.date: 01/01/1970'
+            if ($cleaned -ne $content) {
+                Set-Content $file.FullName $cleaned -NoNewline
+            }
+        }
+
         # Compare (hash, filename) tuples so renamed files are caught
-        $committedFiles = Get-ChildItem $DocsDir -Filter *.md |
+        $committedFiles = Get-ChildItem $committedTemp -Filter *.md |
             Get-FileHash |
             ForEach-Object { "$($_.Hash):$($_.Path | Split-Path -Leaf)" } |
             Sort-Object
@@ -212,6 +227,9 @@ task AssertDocsClean {
     }
     finally {
         Remove-Item $tempDir -Recurse -Force
+        if ($committedTemp -and (Test-Path $committedTemp)) {
+            Remove-Item $committedTemp -Recurse -Force
+        }
     }
 }
 
