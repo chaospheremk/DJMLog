@@ -9,7 +9,9 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Debug', 'Release')]
-    [string] $Configuration = 'Debug'
+    [string] $Configuration = 'Debug',
+
+    [string] $Version
 )
 
 # --- Config -----------------------------------------------------------------
@@ -20,6 +22,8 @@ $ManifestPath = Join-Path $PSScriptRoot $Config.ManifestPath
 $TestsDir     = Join-Path $PSScriptRoot $Config.TestsDir
 $DocsDir      = Join-Path $PSScriptRoot $Config.DocsDir
 $OutputDir    = Join-Path $PSScriptRoot $Config.OutputDir
+$AcrRepo      = $Config.AcrRepoName
+$PackageDir   = Join-Path $OutputDir $ModuleName
 
 # --- Tasks ------------------------------------------------------------------
 
@@ -281,6 +285,49 @@ task Pack Clean, {
 
     Write-Build Green "Packed $ModuleName to $packDest"
 }
+
+# --- Release tasks ------------------------------------------------------------
+
+task SetVersion {
+    assert $Version "Version parameter is required for SetVersion task."
+    Write-Build Green "Setting version to $Version"
+    Update-ModuleManifest -Path $ManifestPath -ModuleVersion $Version
+}
+
+task RegisterAcr {
+    $acrServer = $env:ACR_LOGIN_SERVER
+    assert $acrServer "ACR_LOGIN_SERVER environment variable is not set."
+
+    $repoParams = @{
+        Name    = $AcrRepo
+        Uri     = "https://$acrServer"
+        Trusted = $true
+        Force   = $true
+    }
+    Register-PSResourceRepository @repoParams
+    Write-Build Green "Registered PSResource repository '$AcrRepo' at https://$acrServer"
+}
+
+task Publish {
+    $acrServer = $env:ACR_LOGIN_SERVER
+    assert $acrServer "ACR_LOGIN_SERVER environment variable is not set."
+    assert (Test-Path $PackageDir) "Package directory '$PackageDir' not found. Run Pack first."
+
+    $tokenResult = Get-AzAccessToken -ResourceUrl "https://$acrServer" -AsSecureString
+    $plainToken = $tokenResult.Token | ConvertFrom-SecureString -AsPlainText
+
+    $publishParams = @{
+        Path       = $PackageDir
+        Repository = $AcrRepo
+        ApiKey     = $plainToken
+    }
+    Publish-PSResource @publishParams
+    Write-Build Green "Published $ModuleName to $AcrRepo"
+}
+
+task Release Lint, Test, AssertDocsClean, SetVersion, Pack, RegisterAcr, Publish
+
+# --- Default ------------------------------------------------------------------
 
 task Build Clean, Lint, Test, Docs
 task . Build

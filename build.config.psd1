@@ -12,4 +12,5 @@
     CoveragePaths    = @('Public', 'Private')
     CoverageThreshold = 50
     CoverageFormat   = 'JaCoCo'
+    AcrRepoName      = 'HomeACR'
 }
