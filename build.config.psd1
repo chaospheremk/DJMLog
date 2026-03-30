@@ -1,3 +1,5 @@
+# Build configuration for DJMLog
+# Consumed by DJMLog.build.ps1 — all paths are relative to the repo root.
 @{
     ModuleName       = 'DJMLog'
     ManifestPath     = 'DJMLog.psd1'

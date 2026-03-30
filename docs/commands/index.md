@@ -9,4 +9,3 @@
 | [Set-DJMLogConfig](Set-DJMLogConfig.md) | Configures module-level defaults for Write-DJMLog, Read-DJMLog, and Send-DJMLogBuffer |
 | [Write-DJMLog](Write-DJMLog.md) | Appends a structured entry to a JSONL log file |
 
-

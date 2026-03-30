@@ -28,5 +28,12 @@ output/
 # MkDocs build output (generated in CI only)
 site/
 
+# Compiled binaries
+*.dll
+*.pdb
+
+# JetBrains IDE
+.idea/
+
 # Serena memories — developer-specific, regenerated via onboarding
 .serena/memories/

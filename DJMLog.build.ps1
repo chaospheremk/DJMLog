@@ -3,7 +3,7 @@
 
 <#
 .SYNOPSIS
-    Build script for DJMLog. Run with: Invoke-Build [Task] [-Configuration <Debug|Release>]
+    Build script for the DJMLog module. Run with: Invoke-Build [Task] [-Configuration <Debug|Release>]
 #>
 
 [CmdletBinding()]
@@ -29,11 +29,12 @@ task Clean {
 }
 
 task Lint {
-    # Scan module source directories — excludes .build.ps1 (Invoke-Build DSL aliases
+    # Scan module source directories — excludes DJMLog.build.ps1 (Invoke-Build DSL aliases
     # like task/assert/exec trigger PSAvoidUsingCmdletAliases false positives)
     $scanPaths = @(
         Join-Path $PSScriptRoot $Config.PublicDir
         Join-Path $PSScriptRoot $Config.PrivateDir
+        Join-Path $PSScriptRoot 'scripts'
         $ManifestPath
         Join-Path $PSScriptRoot "$ModuleName.psm1"
     ) | Where-Object { Test-Path $_ }
@@ -107,7 +108,9 @@ task Docs {
         Remove-Item $subDir -Force
     }
 
-    # Post-process: strip PlatyPS v2 placeholder text and normalize date stamps
+    # Post-process: strip PlatyPS v2 placeholder text, normalize date stamps and line endings.
+    # Line-ending normalization (CRLF → LF) ensures committed docs match fresh CI generation
+    # where actions/checkout sets core.autocrlf=false (LF checkout) but PlatyPS writes CRLF.
     foreach ($filePath in (Get-ChildItem $DocsDir -Filter *.md).FullName) {
         $content = [System.IO.File]::ReadAllText($filePath)
         $cleaned = $content -replace '(?m)^This cmdlet has the following aliases,\s*\r?\n\s*\{\{Insert list of aliases\}\}\s*$', 'None.'
@@ -115,9 +118,8 @@ task Docs {
         $cleaned = $cleaned -replace '\{\{[^}]+\}\}', ''
         # PlatyPS embeds ms.date with today's date — normalize to prevent cross-day diffs
         $cleaned = $cleaned -replace '(?m)^ms\.date:\s*\d{2}/\d{2}/\d{4}', 'ms.date: 01/01/1970'
-        if ($cleaned -ne $content) {
-            [System.IO.File]::WriteAllText($filePath, $cleaned)
-        }
+        $cleaned = $cleaned -replace '\r\n', "`n"
+        [System.IO.File]::WriteAllText($filePath, $cleaned)
     }
 
     # Generate index page
@@ -132,7 +134,8 @@ task Docs {
         [void]$index.AppendLine("| [$($cmd.Name)]($($cmd.Name).md) | $synopsis |")
     }
     [void]$index.AppendLine()
-    Set-Content -Path (Join-Path $DocsDir 'index.md') -Value $index.ToString() -Encoding utf8
+    $indexContent = $index.ToString() -replace '\r\n', "`n"
+    [System.IO.File]::WriteAllText((Join-Path $DocsDir 'index.md'), $indexContent)
 
     Remove-Module $ModuleName -Force
     Write-Build Green "Documentation generated for $($commands.Count) commands"
@@ -161,16 +164,17 @@ task AssertDocsClean {
             Remove-Item $subDir -Force
         }
 
-        # Identical post-processing as the Docs task
-        foreach ($file in Get-ChildItem $tempDir -Filter *.md) {
-            $content = Get-Content $file.FullName -Raw
+        # Identical post-processing as the Docs task, plus line-ending normalization
+        # (actions/checkout on Windows sets core.autocrlf=false → LF checkout,
+        #  but PlatyPS generates CRLF — normalize both sides to LF before hashing)
+        foreach ($filePath in (Get-ChildItem $tempDir -Filter *.md).FullName) {
+            $content = [System.IO.File]::ReadAllText($filePath)
             $cleaned = $content -replace '(?m)^This cmdlet has the following aliases,\s*\r?\n\s*\{\{Insert list of aliases\}\}\s*$', 'None.'
             $cleaned = $cleaned -replace '\{\{\s*Fill in the related links here\s*\}\}', ''
             $cleaned = $cleaned -replace '\{\{[^}]+\}\}', ''
             $cleaned = $cleaned -replace '(?m)^ms\.date:\s*\d{2}/\d{2}/\d{4}', 'ms.date: 01/01/1970'
-            if ($cleaned -ne $content) {
-                Set-Content $file.FullName $cleaned -NoNewline
-            }
+            $cleaned = $cleaned -replace '\r\n', "`n"
+            [System.IO.File]::WriteAllText($filePath, $cleaned)
         }
 
         # Generate index page to temp
@@ -185,20 +189,25 @@ task AssertDocsClean {
             [void]$index.AppendLine("| [$($cmd.Name)]($($cmd.Name).md) | $synopsis |")
         }
         [void]$index.AppendLine()
-        Set-Content -Path (Join-Path $tempDir 'index.md') -Value $index.ToString() -Encoding utf8
+        $indexContent = $index.ToString() -replace '\r\n', "`n"
+        [System.IO.File]::WriteAllText((Join-Path $tempDir 'index.md'), $indexContent)
 
         Remove-Module $ModuleName -Force
 
         # Normalize committed docs to a temp copy so ms.date differences don't cause false failures
         $committedTemp = Join-Path ([System.IO.Path]::GetTempPath()) "docs-committed-$(New-Guid)"
         New-Item $committedTemp -ItemType Directory | Out-Null
-        Copy-Item (Join-Path $DocsDir '*.md') $committedTemp
-        foreach ($file in Get-ChildItem $committedTemp -Filter *.md) {
-            $content = Get-Content $file.FullName -Raw
-            $cleaned = $content -replace '(?m)^ms\.date:\s*\d{2}/\d{2}/\d{4}', 'ms.date: 01/01/1970'
-            if ($cleaned -ne $content) {
-                Set-Content $file.FullName $cleaned -NoNewline
+        if (Test-Path $DocsDir) {
+            $committedMd = Get-ChildItem $DocsDir -Filter *.md
+            if ($committedMd) {
+                Copy-Item $committedMd.FullName $committedTemp
             }
+        }
+        foreach ($filePath in (Get-ChildItem $committedTemp -Filter *.md).FullName) {
+            $content = [System.IO.File]::ReadAllText($filePath)
+            $cleaned = $content -replace '(?m)^ms\.date:\s*\d{2}/\d{2}/\d{4}', 'ms.date: 01/01/1970'
+            $cleaned = $cleaned -replace '\r\n', "`n"
+            [System.IO.File]::WriteAllText($filePath, $cleaned)
         }
 
         # Compare (hash, filename) tuples so renamed files are caught
@@ -214,6 +223,12 @@ task AssertDocsClean {
         if (-not $committedFiles -and -not $freshFiles) {
             Write-Build Yellow "Warning: No docs found in either committed or generated directories."
             return
+        }
+        if (-not $committedFiles) {
+            throw "No committed docs found in '$DocsDir'. Run 'Invoke-Build Docs' locally and commit the result."
+        }
+        if (-not $freshFiles) {
+            throw "Committed docs exist but fresh generation produced nothing. Check module import and PlatyPS."
         }
 
         $diff = Compare-Object $committedFiles $freshFiles
