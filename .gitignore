@@ -27,3 +27,6 @@ output/
 
 # MkDocs build output (generated in CI only)
 site/
+
+# Serena memories — developer-specific, regenerated via onboarding
+.serena/memories/
