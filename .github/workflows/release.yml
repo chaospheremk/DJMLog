@@ -1,0 +1,96 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  release:
+    name: Release to ACR
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: deploy
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Parse version from tag
+        id: version
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $version = $tag -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+              throw "Tag '$tag' does not produce a valid SemVer string. Expected format: v1.2.3"
+          }
+          "version=$version" | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "Releasing version: $version"
+
+      - name: Cache PowerShell modules
+        uses: actions/cache@v5
+        with:
+          path: ~/.local/share/powershell/Modules
+          key: ps-release-${{ hashFiles('.github/workflows/release.yml') }}
+          restore-keys: |
+            ps-release-
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          foreach ($mod in @(
+              @{ Name = 'InvokeBuild' },
+              @{ Name = 'Pester'; MinimumVersion = '5.0.0' },
+              @{ Name = 'PSScriptAnalyzer' }
+          )) {
+              if (-not (Get-Module -ListAvailable -Name $mod.Name)) {
+                  $installParams = @{
+                      Name  = $mod.Name
+                      Force = $true
+                      Scope = 'CurrentUser'
+                  }
+                  if ($mod.MinimumVersion) { $installParams.MinimumVersion = $mod.MinimumVersion }
+                  Install-Module @installParams
+              }
+          }
+          if (-not (Get-Module -ListAvailable -Name Microsoft.PowerShell.PlatyPS)) {
+              Install-PSResource -Name Microsoft.PowerShell.PlatyPS -Scope CurrentUser -TrustRepository
+          }
+
+      - name: Login to Azure (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: true
+
+      - name: Run release pipeline
+        shell: pwsh
+        env:
+          ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
+        run: |
+          $buildParams = @{
+              Task          = 'Release'
+              Configuration = 'Release'
+              Version       = '${{ steps.version.outputs.version }}'
+          }
+          Invoke-Build @buildParams
+
+      - name: Create GitHub Release
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createRelease({
+              owner:                  context.repo.owner,
+              repo:                   context.repo.repo,
+              tag_name:               context.ref.replace('refs/tags/', ''),
+              name:                   context.ref.replace('refs/tags/', ''),
+              generate_release_notes: true,
+              draft:                  false,
+              prerelease:             false
+            });
