@@ -309,17 +309,11 @@ task RegisterAcr {
 }
 
 task Publish {
-    $acrServer = $env:ACR_LOGIN_SERVER
-    assert $acrServer "ACR_LOGIN_SERVER environment variable is not set."
     assert (Test-Path $PackageDir) "Package directory '$PackageDir' not found. Run Pack first."
-
-    $tokenResult = Get-AzAccessToken -ResourceUrl "https://$acrServer" -AsSecureString
-    $plainToken = $tokenResult.Token | ConvertFrom-SecureString -AsPlainText
 
     $publishParams = @{
         Path       = $PackageDir
         Repository = $AcrRepo
-        ApiKey     = $plainToken
     }
     Publish-PSResource @publishParams
     Write-Build Green "Published $ModuleName to $AcrRepo"
