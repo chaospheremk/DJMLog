@@ -11,7 +11,7 @@ on:
       - 'DJMLog.psd1'
       - 'Public/**'
       - 'Private/**'
-      - '.build.ps1'
+      - '*.build.ps1'
       - 'build.config.psd1'
       - '.github/workflows/docs.yml'
 

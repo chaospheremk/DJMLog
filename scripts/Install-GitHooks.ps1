@@ -18,19 +18,24 @@
 [CmdletBinding()]
 param()
 
-$hooksDir = Join-Path $PSScriptRoot '../.git/hooks'
-$hookPath = Join-Path $hooksDir 'pre-push'
-$hookLine = "pwsh -NonInteractive -Command 'Invoke-Build Build'"
-
-if (-not (Test-Path $hooksDir)) {
-    Write-Error "Git hooks directory not found at '$hooksDir'. Are you in a git repository?"
+$gitDir = Join-Path $PSScriptRoot '../.git'
+if (-not (Test-Path $gitDir)) {
+    Write-Error "Git directory not found at '$gitDir'. Are you in a git repository?"
     return
 }
+
+$hooksDir = Join-Path $gitDir 'hooks'
+if (-not (Test-Path $hooksDir)) {
+    New-Item $hooksDir -ItemType Directory -Force | Out-Null
+}
+
+$hookPath = Join-Path $hooksDir 'pre-push'
+$hookLine = "pwsh -NonInteractive -Command 'Invoke-Build Build'"
 
 if (Test-Path $hookPath) {
     $existing = Get-Content $hookPath -Raw
     if ($existing -match 'Invoke-Build') {
-        Write-Host 'pre-push hook already contains Invoke-Build — skipping.' -ForegroundColor Green
+        Write-Verbose -Verbose -Message 'pre-push hook already contains Invoke-Build — skipping.'
         return
     }
     Write-Warning 'Existing pre-push hook found — appending Invoke-Build command.'
@@ -40,4 +45,4 @@ else {
     Set-Content $hookPath "#!/bin/sh`n$hookLine"
 }
 
-Write-Host 'pre-push hook installed. Invoke-Build Build will run before each push.' -ForegroundColor Green
+Write-Verbose -Verbose -Message 'pre-push hook installed. Invoke-Build Build will run before each push.'
