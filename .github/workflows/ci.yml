@@ -44,11 +44,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Get cache week
+        id: week
+        run: echo "week=$(date +%Y-W%V)" >> $GITHUB_OUTPUT
+
       - name: Cache PowerShell modules
         uses: actions/cache@v5
         with:
           path: ~/.local/share/powershell/Modules
-          key: ps-lint-${{ hashFiles('.github/workflows/ci.yml') }}
+          key: ps-lint-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/ci.yml') }}
           restore-keys: |
             ps-lint-
 
@@ -77,11 +81,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Get cache week
+        id: week
+        run: echo "week=$(date +%Y-W%V)" >> $GITHUB_OUTPUT
+
       - name: Cache PowerShell modules
         uses: actions/cache@v5
         with:
           path: ~/.local/share/powershell/Modules
-          key: ps-test-${{ hashFiles('.github/workflows/ci.yml') }}
+          key: ps-test-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/ci.yml') }}
           restore-keys: |
             ps-test-
 
@@ -140,11 +148,15 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Get cache week
+        id: week
+        run: echo "week=$(date +%Y-W%V)" >> $GITHUB_OUTPUT
+
       - name: Cache PowerShell modules
         uses: actions/cache@v5
         with:
           path: ~/.local/share/powershell/Modules
-          key: ps-docs-${{ hashFiles('.github/workflows/ci.yml') }}
+          key: ps-docs-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/ci.yml') }}
           restore-keys: |
             ps-docs-
 

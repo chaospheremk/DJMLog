@@ -31,11 +31,15 @@ jobs:
           "version=$version" | Out-File $env:GITHUB_OUTPUT -Append
           Write-Host "Releasing version: $version"
 
+      - name: Get cache week
+        id: week
+        run: echo "week=$(date +%Y-W%V)" >> $GITHUB_OUTPUT
+
       - name: Cache PowerShell modules
         uses: actions/cache@v5
         with:
           path: ~/.local/share/powershell/Modules
-          key: ps-release-${{ hashFiles('.github/workflows/release.yml') }}
+          key: ps-release-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/release.yml') }}
           restore-keys: |
             ps-release-
 
