@@ -50,7 +50,7 @@ Describe 'Get-DJMBearerToken' {
 
         It 'does not return cached token when expired' {
             Mock Invoke-RestMethod -ModuleName DJMLog {
-                return @{ access_token = 'new-token'; expires_in = 3600 }
+                @{ access_token = 'new-token'; expires_in = 3600 }
             }
             InModuleScope DJMLog {
                 $script:BearerToken = 'expired-token'
@@ -99,7 +99,7 @@ Describe 'Get-DJMBearerToken' {
 
         It 'acquires token via client secret and caches it' {
             Mock Invoke-RestMethod -ModuleName DJMLog {
-                return @{ access_token = 'secret-token'; expires_in = 3600 }
+                @{ access_token = 'secret-token'; expires_in = 3600 }
             }
             $result = InModuleScope DJMLog { Get-DJMBearerToken }
             $result | Should -Be 'secret-token'
@@ -111,7 +111,7 @@ Describe 'Get-DJMBearerToken' {
                 $Body.grant_type -eq 'client_credentials' -and
                 $Body.scope -eq 'https://monitor.azure.us//.default'
             } -MockWith {
-                return @{ access_token = 'gcc-token'; expires_in = 3600 }
+                @{ access_token = 'gcc-token'; expires_in = 3600 }
             }
             $result = InModuleScope DJMLog { Get-DJMBearerToken }
             $result | Should -Be 'gcc-token'
@@ -122,7 +122,7 @@ Describe 'Get-DJMBearerToken' {
 
         It 'returns $null when response has no access_token' {
             Mock Invoke-RestMethod -ModuleName DJMLog {
-                return @{ expires_in = 3600 }
+                @{ expires_in = 3600 }
             }
             $result = InModuleScope DJMLog { Get-DJMBearerToken } -WarningAction SilentlyContinue
             $result | Should -BeNullOrEmpty
@@ -130,7 +130,7 @@ Describe 'Get-DJMBearerToken' {
 
         It 'returns $null when response has no expires_in' {
             Mock Invoke-RestMethod -ModuleName DJMLog {
-                return @{ access_token = 'partial-token' }
+                @{ access_token = 'partial-token' }
             }
             $result = InModuleScope DJMLog { Get-DJMBearerToken } -WarningAction SilentlyContinue
             $result | Should -BeNullOrEmpty

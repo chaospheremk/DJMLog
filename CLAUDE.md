@@ -190,7 +190,11 @@ DJMLog/
 │   ├── ConvertTo-DJMDictionary.Tests.ps1
 │   └── ConvertTo-DJMOrderedPSObject.Tests.ps1
 ├── PSScriptAnalyzerSettings.psd1        # Linter config
-└── .github/workflows/ci.yml             # PSScriptAnalyzer + Pester on push/PR
+└── .github/workflows/
+    ├── ci.yml                           # PSScriptAnalyzer + Pester on PR
+    ├── release.yml                      # Tag-triggered ACR publish + GitHub Release
+    ├── docs.yml                         # Zensical docs build + GitHub Pages deploy
+    └── sync-dev.yml                     # Auto-merge main into dev
 ```
 
 Import via manifest: `Import-Module ./DJMLog.psd1 -Force`
@@ -210,6 +214,7 @@ Invoke-Build Docs                      # Regenerate PlatyPS docs in docs/command
 Invoke-Build AssertDocsClean           # Verify committed docs match fresh generation
 Invoke-Build BumpVersion               # Increment patch version in manifest
 Invoke-Build Pack                      # Assemble output/ directory
+Invoke-Build Release -Configuration Release -Version 1.2.3  # Full release pipeline
 Invoke-Build ?                         # Show all tasks and dependencies
 
 # Install pre-push hook (one-time)
