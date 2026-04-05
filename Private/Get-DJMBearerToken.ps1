@@ -27,18 +27,20 @@ function Get-DJMBearerToken {
 
     # 1. External token — user manages expiry
     if ($script:BearerTokenExternal) {
-        return $script:BearerTokenExternal
+        $script:BearerTokenExternal
+        return
     }
 
     # 2. Return cached token if still valid (5-min safety margin)
     if ($script:BearerToken -and [datetime]::UtcNow -lt $script:TokenExpiry) {
-        return $script:BearerToken
+        $script:BearerToken
+        return
     }
 
     # Require TenantId + AppId for all OAuth2 flows
     if (-not $script:TenantId -or -not $script:AppId) {
         Write-Warning 'Get-DJMBearerToken: TenantId and AppId are required for token acquisition. Use Set-DJMLogConfig or supply -BearerToken.'
-        return $null
+        return
     }
 
     # Resolve cloud endpoints
@@ -50,7 +52,7 @@ function Get-DJMBearerToken {
     $endpoints  = $cloudMap[$script:CloudEnvironment]
     if (-not $endpoints) {
         Write-Warning "Get-DJMBearerToken: unknown CloudEnvironment '$($script:CloudEnvironment)'. Valid values: Commercial, GCCHigh, DoD."
-        return $null
+        return
     }
     $loginHost  = $endpoints.LoginHost
     $tokenScope = $endpoints.Scope
@@ -69,7 +71,7 @@ function Get-DJMBearerToken {
         }
         if (-not $cert) {
             Write-Warning "Get-DJMBearerToken: no certificate with thumbprint '$($script:CertificateThumbprint)' and a private key was found."
-            return $null
+            return
         }
     }
     elseif ($script:CertificateSubject) {
@@ -85,7 +87,7 @@ function Get-DJMBearerToken {
         }
         if ($candidates.Count -eq 0) {
             Write-Warning "Get-DJMBearerToken: no valid certificate with subject '$($script:CertificateSubject)' was found."
-            return $null
+            return
         }
         # Pick the one with the latest NotAfter (most recently issued)
         $cert = ($candidates | Sort-Object -Property NotAfter -Descending)[0]
@@ -129,7 +131,7 @@ function Get-DJMBearerToken {
         }
         catch {
             Write-Warning "Get-DJMBearerToken: failed to sign JWT assertion: $_"
-            return $null
+            return
         }
 
         $signedJwt = "$unsignedJwt.$signatureB64"
@@ -160,7 +162,7 @@ function Get-DJMBearerToken {
     }
     else {
         Write-Warning 'Get-DJMBearerToken: no authentication method configured. Supply BearerToken, CertificateThumbprint, CertificateSubject, or AppSecret via Set-DJMLogConfig.'
-        return $null
+        return
     }
 
     # Acquire token
@@ -168,14 +170,14 @@ function Get-DJMBearerToken {
         $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $body -ContentType 'application/x-www-form-urlencoded' -ErrorAction Stop
         if (-not $response.access_token -or -not $response.expires_in) {
             Write-Warning 'Get-DJMBearerToken: token endpoint returned an incomplete response (missing access_token or expires_in).'
-            return $null
+            return
         }
         $script:BearerToken = $response.access_token
         $script:TokenExpiry = [datetime]::UtcNow.AddSeconds($response.expires_in - 300)  # 5-min safety margin
-        return $script:BearerToken
+        $script:BearerToken
     }
     catch {
         Write-Warning "Get-DJMBearerToken: token acquisition failed: $_"
-        return $null
+        return
     }
 }
