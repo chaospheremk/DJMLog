@@ -6,9 +6,9 @@ Structured JSONL logging module for PowerShell 7+.
 Module loader. Initialises shared state then dot-sources all private helpers
 and public functions from their respective subdirectories.
 
-Exports six functions:
+Exports seven functions:
   Set-DJMLogConfig, Write-DJMLog, Read-DJMLog, Send-DJMLogBuffer,
-  ConvertTo-DJMDictionary, ConvertTo-DJMOrderedPSObject
+  Get-DJMLogDiagnostics, ConvertTo-DJMDictionary, ConvertTo-DJMOrderedPSObject
 
 .NOTES
 Requires PowerShell 7 or later.
@@ -37,13 +37,17 @@ $script:CertificateSubject      = $null        # e.g. 'CN=DJMLog-Auth'
 $script:CertificateThumbprint   = $null        # pin to specific cert
 $script:FlushThreshold          = 100
 $script:MaxBufferSize           = 5000
+$script:MaxBufferBytes          = 52428800     # 50 MB byte-level cap on the buffer
 $script:MaxFlushRetries         = 3
 $script:LogBuffer               = [System.Collections.Generic.List[hashtable]]::new()
+$script:BufferByteTotal         = 0            # running serialised byte total tracked alongside the buffer
 $script:BearerToken             = $null
 $script:BearerTokenExternal     = $null        # user-supplied token via -BearerToken
 $script:TokenExpiry             = [datetime]::MinValue
 $script:FlushFailureCount       = 0
 $script:AutoFlushDisabled       = $false
+$script:AutoFlushOpenedAtUtc    = $null        # set when circuit breaker trips; cleared on close
+$script:HalfOpenAfterSeconds    = 300          # half-open probe window per ADR-017
 
 # Internal error queue (SelfLog) — last 100 errors, FIFO. Surfaced via Get-DJMLogDiagnostics.
 $script:InternalErrors          = [System.Collections.Generic.Queue[pscustomobject]]::new()
@@ -64,6 +68,44 @@ $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
     if ($script:BufferLock) { $script:BufferLock.Dispose() }
 }
 
-# Dot-source all private helpers then all public functions
-foreach ($file in (Get-ChildItem -Path "$PSScriptRoot\Private" -Filter '*.ps1')) { . $file.FullName }
-foreach ($file in (Get-ChildItem -Path "$PSScriptRoot\Public"  -Filter '*.ps1')) { . $file.FullName }
+# Dot-source all private helpers then all public functions. Wrap each in
+# try/catch so a single bad file leaves the module usable for the rest. Failures
+# are queued in the SelfLog and re-thrown only if any FunctionsToExport entry
+# can't be resolved after loading — we won't ship a half-loaded module.
+$loadFailures = [System.Collections.Generic.List[string]]::new()
+foreach ($file in @(
+        Get-ChildItem -Path "$PSScriptRoot\Private" -Filter '*.ps1'
+        Get-ChildItem -Path "$PSScriptRoot\Public"  -Filter '*.ps1'
+    )) {
+    try {
+        . $file.FullName
+    }
+    catch {
+        $loadFailures.Add("$($file.Name): $($_.Exception.Message)")
+        try {
+            $script:InternalErrors.Enqueue([pscustomobject]@{
+                UtcTimestamp = [datetime]::UtcNow.ToString('o')
+                Source       = 'Module Load'
+                Message      = "Failed to load $($file.Name): $($_.Exception.Message)"
+                Exception    = $_.Exception
+            })
+        }
+        catch {
+            # SelfLog itself failed — write to stderr so something surfaces
+            [Console]::Error.WriteLine("DJMLog: failed to load $($file.Name) and could not enqueue SelfLog: $($_.Exception.Message)")
+        }
+    }
+}
+
+if ($loadFailures.Count -gt 0) {
+    $manifestPath = Join-Path $PSScriptRoot 'DJMLog.psd1'
+    if (Test-Path -LiteralPath $manifestPath) {
+        $manifest  = Import-PowerShellDataFile -LiteralPath $manifestPath
+        $exports   = @($manifest.FunctionsToExport)
+        $missing   = @($exports.Where({ -not (Get-Command -Name $_ -ErrorAction SilentlyContinue) }))
+        if ($missing.Count -gt 0) {
+            throw "DJMLog failed to load: missing exported functions [$($missing -join ', ')]. Failures: $($loadFailures -join '; ')"
+        }
+    }
+    Write-Warning "DJMLog: $($loadFailures.Count) source file(s) failed to load but all exports resolved. See Get-DJMLogDiagnostics for details."
+}

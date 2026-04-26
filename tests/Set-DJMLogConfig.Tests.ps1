@@ -29,6 +29,7 @@ Describe 'Set-DJMLogConfig' {
             $script:FlushThreshold          = 100
             $script:MaxBufferSize           = 5000
             $script:MaxFlushRetries         = 3
+            $script:MaxBufferBytes          = 52428800
             $script:FlushFailureCount       = 0
             $script:AutoFlushDisabled       = $false
         }
@@ -382,6 +383,158 @@ Describe 'Set-DJMLogConfig' {
             '{ "BearerToken": "file-token" }' | Set-Content -LiteralPath $script:LAConfigFile
             Set-DJMLogConfig -ConfigPath $script:LAConfigFile -BearerToken 'param-token'
             InModuleScope DJMLog { $script:BearerTokenExternal } | Should -Be 'param-token'
+        }
+    }
+
+    Context 'MaxBufferBytes parameter (H3)' {
+
+        It 'sets MaxBufferBytes when supplied as a positive integer' {
+            Set-DJMLogConfig -MaxBufferBytes 2097152
+            InModuleScope DJMLog { $script:MaxBufferBytes } | Should -Be 2097152
+        }
+
+        It 'accepts MaxBufferBytes of 0 (disable byte-cap)' {
+            Set-DJMLogConfig -MaxBufferBytes 0
+            InModuleScope DJMLog { $script:MaxBufferBytes } | Should -Be 0
+        }
+
+        It 'defaults MaxBufferBytes to 50 MB (52428800) on fresh module load' {
+            # The module default is 52428800 bytes (50 * 1024 * 1024)
+            InModuleScope DJMLog { $script:MaxBufferBytes } | Should -Be 52428800
+        }
+
+        It 'rejects a negative MaxBufferBytes with an error' {
+            { Set-DJMLogConfig -MaxBufferBytes -1 -ErrorAction Stop } | Should -Throw
+        }
+    }
+
+    Context 'Log Analytics validation (M2)' {
+
+        It 'emits a single error listing all missing LA fields when LogAnalyticsEnabled=$true with no auth or DCR config' {
+            Set-DJMLogConfig -LogAnalyticsEnabled $true -ErrorVariable err -ErrorAction SilentlyContinue
+            $err | Should -Not -BeNullOrEmpty
+            # The error message should reference the missing required fields
+            $errText = ($err | ForEach-Object { $_.ToString() }) -join ' '
+            $errText | Should -Match 'DcrEndpointUri|DcrImmutableId|DcrStreamName|TenantId|AppId|auth'
+        }
+
+        It 'does not emit an error when BearerToken is supplied with DCE/DCR/Stream (no TenantId/AppId needed)' {
+            $params = @{
+                LogAnalyticsEnabled = $true
+                DcrEndpointUri      = 'https://fake.ingest.monitor.azure.us'
+                DcrImmutableId      = 'dcr-fake'
+                DcrStreamName       = 'Custom-Test_CL'
+                BearerToken         = 'eyJ-fake-token'
+            }
+            { Set-DJMLogConfig @params -ErrorAction Stop } | Should -Not -Throw
+        }
+
+        It 'does not emit an error when CertificateThumbprint with TenantId/AppId and DCR config are all supplied' {
+            $params = @{
+                LogAnalyticsEnabled    = $true
+                DcrEndpointUri         = 'https://fake.ingest.monitor.azure.us'
+                DcrImmutableId         = 'dcr-fake'
+                DcrStreamName          = 'Custom-Test_CL'
+                TenantId               = 'tenant-id'
+                AppId                  = 'app-id'
+                CertificateThumbprint  = 'AABB1122'
+            }
+            { Set-DJMLogConfig @params -ErrorAction Stop } | Should -Not -Throw
+        }
+
+        It 'does not emit an error when CertificateSubject with TenantId/AppId and DCR config are all supplied' {
+            $params = @{
+                LogAnalyticsEnabled = $true
+                DcrEndpointUri      = 'https://fake.ingest.monitor.azure.us'
+                DcrImmutableId      = 'dcr-fake'
+                DcrStreamName       = 'Custom-Test_CL'
+                TenantId            = 'tenant-id'
+                AppId               = 'app-id'
+                CertificateSubject  = 'CN=DJMLog-Auth'
+            }
+            { Set-DJMLogConfig @params -ErrorAction Stop } | Should -Not -Throw
+        }
+
+        It 'does not emit an error when AppSecret with TenantId/AppId and DCR config are all supplied' {
+            $params = @{
+                LogAnalyticsEnabled = $true
+                DcrEndpointUri      = 'https://fake.ingest.monitor.azure.us'
+                DcrImmutableId      = 'dcr-fake'
+                DcrStreamName       = 'Custom-Test_CL'
+                TenantId            = 'tenant-id'
+                AppId               = 'app-id'
+                AppSecret           = 'my-secret'
+            }
+            { Set-DJMLogConfig @params -ErrorAction Stop } | Should -Not -Throw
+        }
+
+        It 'completing a previously incomplete LA config on a second call produces no error' {
+            # First call sets LA enabled with only partial config
+            Set-DJMLogConfig -LogAnalyticsEnabled $true -ErrorAction SilentlyContinue
+
+            # Second call completes the config — should not error
+            $params = @{
+                DcrEndpointUri = 'https://fake.ingest.monitor.azure.us'
+                DcrImmutableId = 'dcr-fake'
+                DcrStreamName  = 'Custom-Test_CL'
+                TenantId       = 'tenant-id'
+                AppId          = 'app-id'
+                AppSecret      = 'secret'
+            }
+            { Set-DJMLogConfig @params -ErrorAction Stop } | Should -Not -Throw
+        }
+
+        It 'does not validate LA preconditions when LogAnalyticsEnabled is false' {
+            # LA is disabled (default) — no DCR config set — no error expected
+            { Set-DJMLogConfig -Path 'C:\Logs\test.jsonl' -ErrorAction Stop } | Should -Not -Throw
+        }
+    }
+
+    Context 'Endpoint host vs CloudEnvironment warning (M5)' {
+
+        It 'emits a warning when Commercial cloud is set but DcrEndpointUri contains azure.us' {
+            $params = @{
+                CloudEnvironment = 'Commercial'
+                DcrEndpointUri   = 'https://fake.ingest.monitor.azure.us'
+            }
+            Set-DJMLogConfig @params -WarningVariable w -WarningAction SilentlyContinue
+            $w | Should -Not -BeNullOrEmpty
+        }
+
+        It 'emits a warning when GCCHigh cloud is set but DcrEndpointUri contains azure.com' {
+            $params = @{
+                CloudEnvironment = 'GCCHigh'
+                DcrEndpointUri   = 'https://fake.ingest.monitor.azure.com'
+            }
+            Set-DJMLogConfig @params -WarningVariable w -WarningAction SilentlyContinue
+            $w | Should -Not -BeNullOrEmpty
+        }
+
+        It 'does not emit a warning when GCCHigh cloud is set and DcrEndpointUri contains azure.us' {
+            $params = @{
+                CloudEnvironment = 'GCCHigh'
+                DcrEndpointUri   = 'https://fake.ingest.monitor.azure.us'
+            }
+            Set-DJMLogConfig @params -WarningVariable w -WarningAction SilentlyContinue
+            $w | Should -BeNullOrEmpty
+        }
+
+        It 'does not emit a warning when DoD cloud is set and DcrEndpointUri contains azure.us' {
+            $params = @{
+                CloudEnvironment = 'DoD'
+                DcrEndpointUri   = 'https://fake.ingest.monitor.azure.us'
+            }
+            Set-DJMLogConfig @params -WarningVariable w -WarningAction SilentlyContinue
+            $w | Should -BeNullOrEmpty
+        }
+
+        It 'does not emit a warning when Commercial cloud is set and DcrEndpointUri contains azure.com' {
+            $params = @{
+                CloudEnvironment = 'Commercial'
+                DcrEndpointUri   = 'https://fake.ingest.monitor.azure.com'
+            }
+            Set-DJMLogConfig @params -WarningVariable w -WarningAction SilentlyContinue
+            $w | Should -BeNullOrEmpty
         }
     }
 

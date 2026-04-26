@@ -16,9 +16,9 @@ jobs:
     outputs:
       powershell: ${{ steps.filter.outputs.powershell }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
-      - uses: dorny/paths-filter@v4
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4
         id: filter
         with:
           filters: |
@@ -42,14 +42,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Get cache week
         id: week
         run: echo "week=$(date +%Y-W%V)" >> $GITHUB_OUTPUT
 
       - name: Cache PowerShell modules
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.local/share/powershell/Modules
           key: ps-lint-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/ci.yml') }}
@@ -70,28 +70,22 @@ jobs:
         run: Invoke-Build Lint
 
   test:
-    name: Pester Tests
+    name: Pester Tests (pwsh ${{ matrix.pwsh }})
     needs: changes
     if: github.actor != 'claude[bot]' && needs.changes.outputs.powershell == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        pwsh: ['7.4', '7.5']
+    container:
+      image: mcr.microsoft.com/powershell:${{ matrix.pwsh }}-ubuntu-22.04
     permissions:
       contents: read
       checks: write
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Get cache week
-        id: week
-        run: echo "week=$(date +%Y-W%V)" >> $GITHUB_OUTPUT
-
-      - name: Cache PowerShell modules
-        uses: actions/cache@v5
-        with:
-          path: ~/.local/share/powershell/Modules
-          key: ps-test-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/ci.yml') }}
-          restore-keys: |
-            ps-test-
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Install build dependencies
         shell: pwsh
@@ -116,8 +110,8 @@ jobs:
         run: Invoke-Build Test -Configuration Release
 
       - name: Publish test results
-        if: always()
-        uses: dorny/test-reporter@v3
+        if: always() && matrix.pwsh == '7.5'
+        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3
         with:
           name: Pester Tests
           path: TestResults.xml
@@ -125,16 +119,16 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: test-results
+          name: test-results-pwsh-${{ matrix.pwsh }}
           path: TestResults.xml
 
       - name: Upload coverage results
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: coverage-results
+          name: coverage-results-pwsh-${{ matrix.pwsh }}
           path: CoverageResults.xml
 
   docs-check:
@@ -146,14 +140,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Get cache week
         id: week
         run: echo "week=$(date +%Y-W%V)" >> $GITHUB_OUTPUT
 
       - name: Cache PowerShell modules
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.local/share/powershell/Modules
           key: ps-docs-${{ steps.week.outputs.week }}-${{ hashFiles('.github/workflows/ci.yml') }}
@@ -182,19 +176,126 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           fetch-depth: 0
 
       - name: TruffleHog scan
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@17456f8c7d042d8c82c9a8ca9e937231f9f42e26 # v3.95.2
         with:
           extra_args: --only-verified
+
+  dependency-audit:
+    name: Dependency Audit
+    needs: changes
+    if: github.actor != 'claude[bot]' && needs.changes.outputs.powershell == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Validate manifest and PowerShell dependency surface
+        shell: pwsh
+        run: |
+          # M11: lightweight audit of the dependency surface. Test-ModuleManifest
+          # validates the .psd1 contract. PSScriptAnalyzer + Pester + InvokeBuild
+          # versions are surfaced so an upgrade with a known-bad release flags
+          # itself in the workflow log.
+          Test-ModuleManifest -Path ./DJMLog.psd1 | Out-Null
+          foreach ($mod in @('InvokeBuild', 'Pester', 'PSScriptAnalyzer')) {
+              $resolved = Find-Module -Name $mod -ErrorAction SilentlyContinue
+              if ($resolved) {
+                  Write-Host "$($resolved.Name) latest version: $($resolved.Version) (published $($resolved.PublishedDate))"
+              }
+              else {
+                  Write-Warning "Could not query PowerShell Gallery for $mod — audit is informational only."
+              }
+          }
+
+  integration:
+    name: Logs Ingestion Integration
+    needs: changes
+    # Skip on forked PRs (no access to deploy-environment secrets) and when the
+    # deploy environment hasn't been provisioned with a test DCR. Runs only when
+    # PowerShell-touching files changed.
+    if: |
+      github.actor != 'claude[bot]' &&
+      needs.changes.outputs.powershell == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: deploy
+    permissions:
+      contents: read
+      id-token: write
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Skip if integration secrets are not provisioned
+        id: gate
+        shell: pwsh
+        env:
+          INT_TENANT_ID:        ${{ secrets.INT_TENANT_ID }}
+          INT_DCE_URI:          ${{ vars.INT_DCE_URI }}
+          INT_DCR_IMMUTABLE_ID: ${{ vars.INT_DCR_IMMUTABLE_ID }}
+          INT_DCR_STREAM:       ${{ vars.INT_DCR_STREAM }}
+        run: |
+          $required = @('INT_TENANT_ID','INT_DCE_URI','INT_DCR_IMMUTABLE_ID','INT_DCR_STREAM')
+          $missing  = @($required | Where-Object { -not (Get-Item "Env:$_" -ErrorAction SilentlyContinue).Value })
+          if ($missing.Count -gt 0) {
+              "skip=true" | Out-File $env:GITHUB_OUTPUT -Append
+              Write-Host "Integration job skipped — missing environment variables: $($missing -join ', ')"
+          }
+          else {
+              "skip=false" | Out-File $env:GITHUB_OUTPUT -Append
+          }
+
+      - name: Login to Azure (OIDC)
+        if: steps.gate.outputs.skip == 'false'
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          enable-AzPSSession: true
+
+      - name: Round-trip a test entry to the live DCR
+        if: steps.gate.outputs.skip == 'false'
+        shell: pwsh
+        env:
+          INT_TENANT_ID:        ${{ secrets.INT_TENANT_ID }}
+          INT_APP_ID:           ${{ secrets.INT_APP_ID }}
+          INT_CERT_THUMBPRINT:  ${{ secrets.INT_CERT_THUMBPRINT }}
+          INT_DCE_URI:          ${{ vars.INT_DCE_URI }}
+          INT_DCR_IMMUTABLE_ID: ${{ vars.INT_DCR_IMMUTABLE_ID }}
+          INT_DCR_STREAM:       ${{ vars.INT_DCR_STREAM }}
+        run: |
+          Import-Module ./DJMLog.psd1 -Force
+          $params = @{
+              LogAnalyticsEnabled   = $true
+              CloudEnvironment      = 'GCCHigh'
+              DcrEndpointUri        = $env:INT_DCE_URI
+              DcrImmutableId        = $env:INT_DCR_IMMUTABLE_ID
+              DcrStreamName         = $env:INT_DCR_STREAM
+              TenantId              = $env:INT_TENANT_ID
+              AppId                 = $env:INT_APP_ID
+              CertificateThumbprint = $env:INT_CERT_THUMBPRINT
+          }
+          Set-DJMLogConfig @params
+          Write-DJMLog -Message "DJMLog CI integration probe $([guid]::NewGuid().Guid)" -Level INFO
+          Send-DJMLogBuffer -Force
+          $diag = Get-DJMLogDiagnostics
+          if ($diag.CircuitBreakerState -ne 'Closed') {
+              throw "Integration round-trip failed: circuit breaker state = $($diag.CircuitBreakerState). Errors: $($diag.Errors | ConvertTo-Json -Compress -Depth 4)"
+          }
 
   ci-gate:
     name: CI Gate
     if: always() && github.actor != 'claude[bot]'
-    needs: [lint, test, docs-check, secret-scan]
+    needs: [lint, test, docs-check, secret-scan, dependency-audit]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -203,7 +304,8 @@ jobs:
           if [[ "${{ needs.lint.result }}" == "failure" || \
                 "${{ needs.test.result }}" == "failure" || \
                 "${{ needs.docs-check.result }}" == "failure" || \
-                "${{ needs.secret-scan.result }}" == "failure" ]]; then
+                "${{ needs.secret-scan.result }}" == "failure" || \
+                "${{ needs.dependency-audit.result }}" == "failure" ]]; then
             echo "One or more CI jobs failed"
             exit 1
           fi

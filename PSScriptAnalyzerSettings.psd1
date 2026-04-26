@@ -1,13 +1,13 @@
 @{
     Severity = @('Warning', 'Error')
 
-    # Run all default rules except the ones excluded below.
-    # The four rules in the Rules block are enabled by default; the block
-    # is kept here as documentation of the rules we explicitly care about.
+    # Run all default rules except the ones excluded below. The four rules
+    # below are explicitly raised to Severity = 'Error' (Phase 2 / M12) so
+    # CI fails on style regressions that previously slipped through as warnings.
     Rules = @{
-        PSAvoidUsingCmdletAliases            = @{ Enable = $true }
-        PSUseApprovedVerbs                   = @{ Enable = $true }
-        PSAvoidGlobalVars                    = @{ Enable = $true }
+        PSAvoidUsingCmdletAliases            = @{ Enable = $true; Severity = 'Error' }
+        PSUseApprovedVerbs                   = @{ Enable = $true; Severity = 'Error' }
+        PSAvoidGlobalVars                    = @{ Enable = $true; Severity = 'Error' }
         PSUseDeclaredVarsMoreThanAssignments = @{ Enable = $true }
     }
 

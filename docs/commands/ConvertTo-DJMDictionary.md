@@ -20,7 +20,8 @@ Converts PSObjects or a hashtable into a Dictionary[string, PSObject].
 ### FromObjectList
 
 ```
-ConvertTo-DJMDictionary -InputObject <psobject> -KeyProperty <string> [<CommonParameters>]
+ConvertTo-DJMDictionary -InputObject <psobject> -KeyProperty <string> [-OnDuplicateKey <string>]
+ [<CommonParameters>]
 ```
 
 ### FromHashtable
@@ -41,8 +42,8 @@ Accepts input via two mutually exclusive parameter sets:
       using the value of the specified property as its key.
 Keys are
       trimmed and lowercased before insertion.
-Duplicate keys emit a
-      non-terminating error and the second object is discarded.
+Behavior on duplicate keys
+      is governed by -OnDuplicateKey (default: Overwrite).
 
   FromHashtable
       Each key-value pair in the hashtable is copied into the dictionary
@@ -128,6 +129,31 @@ ParameterSets:
 - Name: FromObjectList
   Position: Named
   IsRequired: true
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -OnDuplicateKey
+
+Controls duplicate-key behavior in the FromObjectList parameter set:
+    Overwrite (default) - the later object wins; no error is emitted.
+    Error               - the first object is kept; a non-terminating
+                          error is emitted for each duplicate.
+    KeepFirst           - the first object is kept; no error is emitted.
+
+```yaml
+Type: System.String
+DefaultValue: Overwrite
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: FromObjectList
+  Position: Named
+  IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false

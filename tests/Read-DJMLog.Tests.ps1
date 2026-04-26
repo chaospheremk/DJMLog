@@ -345,6 +345,27 @@ Describe 'Read-DJMLog' {
                 Remove-Item -LiteralPath $csv -ErrorAction SilentlyContinue
             }
         }
+
+        It 'calls Export-Csv with -Encoding utf8 (H6)' {
+            Mock Export-Csv -ModuleName DJMLog { }
+
+            $csv = Join-Path ([System.IO.Path]::GetTempPath()) "djmlog-enc-$([guid]::NewGuid().Guid).csv"
+            try {
+                Read-DJMLog -LogPath $script:LogFile -ExportCsv -CsvPath $csv
+            }
+            finally {
+                Remove-Item -LiteralPath $csv -ErrorAction SilentlyContinue
+            }
+
+            # Read-DJMLog pipes its results into Export-Csv; Pester counts one
+            # invocation per pipelined input object, but every invocation must
+            # carry the same -Encoding argument. Assert at least one invocation
+            # and that every observed call used a UTF-8 encoding.
+            Should -Invoke Export-Csv -ModuleName DJMLog -ParameterFilter {
+                ($Encoding -is [System.Text.Encoding] -and $Encoding.EncodingName -match 'UTF') -or
+                ($Encoding -is [string] -and $Encoding -match 'utf8')
+            }
+        }
     }
 
     Context '-Colorize respects -First and -Last slicing' {

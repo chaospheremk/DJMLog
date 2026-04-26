@@ -29,30 +29,45 @@ None.
 ## DESCRIPTION
 
 Sends buffered log entries to the configured Data Collection Rule (DCR) endpoint
-in chunked batches of up to 500 KB each.
-Each record's UtcTimestamp is mapped to
-the TimeGenerated field so timestamps remain accurate regardless of when the batch
-is sent.
+in chunked batches of up to 950 KB each (raw, pre-compression).
+Each record's
+UtcTimestamp is mapped to the TimeGenerated field so timestamps remain accurate
+regardless of when the batch is sent.
+
+Chunking uses incremental UTF-8 byte accounting: each record's encoded length is
+summed against a running batch size, and a new batch is started before the
+cumulative size would cross the 950 KB threshold.
+Records whose individual
+serialised size already exceeds 950 KB are rejected — they are removed from the
+buffer and a SelfLog entry is queued so callers can detect the drop via
+Get-DJMLogDiagnostics.
 
 Preconditions:
   - LogAnalyticsEnabled must be $true (via Set-DJMLogConfig)
   - DcrEndpointUri, DcrImmutableId, and DcrStreamName must be configured
   - The buffer must contain at least one entry
-  - Auto-flush must not be disabled (circuit breaker) unless -Force is used
+  - Auto-flush must not be disabled (circuit breaker) unless -Force is used,
+    or the half-open window (HalfOpenAfterSeconds, default 300s) has elapsed
 
-On success, sent entries are removed from the buffer, the failure count is reset,
-and auto-flush is re-enabled.
-On failure, the failure count is incremented and
-auto-flush is disabled when MaxFlushRetries is reached.
-The function breaks on the
-first batch failure so partially sent entries are removed while unsent entries
-remain buffered for the next attempt.
+Circuit breaker (per ADR-017):
+  Closed   - normal operation.
+Failures up to MaxFlushRetries trip the breaker.
+  Open     - auto-flush rejected; the call returns with a warning.
+-Force
+             overrides.
+  HalfOpen - once HalfOpenAfterSeconds has elapsed since the breaker opened,
+             the next non-Force call attempts a single-shot probe (MaxRetries=1).
+             Success closes the breaker; failure refreshes the open timer.
+
+HTTP requests (token acquisition + DCR POST) route through the
+Invoke-DJMRestMethodWithRetry helper, which honours Retry-After on 429 and
+applies exponential backoff with jitter on 5xx (per ADR-016).
 
 Buffer access is serialised through an in-process SemaphoreSlim
-($script:BufferLock) so concurrent Write-DJMLog and Send-DJMLogBuffer calls in
-the same process cannot corrupt the underlying List.
-Cross-process file writes
-are still serialised by the named OS mutex.
+($script:BufferLock) so concurrent Write-DJMLog and Send-DJMLogBuffer calls
+in the same process cannot corrupt the underlying List.
+Cross-process file
+writes are still serialised by the named OS mutex.
 
 ## EXAMPLES
 

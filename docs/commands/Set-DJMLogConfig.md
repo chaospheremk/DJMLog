@@ -26,8 +26,8 @@ Set-DJMLogConfig [[-Path] <string>] [[-MaxSizeMB] <double>] [[-MutexTimeoutMs] <
  [[-DcrEndpointUri] <string>] [[-DcrImmutableId] <string>] [[-DcrStreamName] <string>]
  [[-TenantId] <string>] [[-AppId] <string>] [[-AppSecret] <psobject>]
  [[-CertificateSubject] <string>] [[-CertificateThumbprint] <string>] [[-BearerToken] <string>]
- [[-FlushThreshold] <int>] [[-MaxBufferSize] <int>] [[-MaxFlushRetries] <int>]
- [[-ConfigPath] <string>] [<CommonParameters>]
+ [[-FlushThreshold] <int>] [[-MaxBufferSize] <int>] [[-MaxBufferBytes] <long>]
+ [[-MaxFlushRetries] <int>] [[-ConfigPath] <string>] [<CommonParameters>]
 ```
 
 ## ALIASES
@@ -51,6 +51,18 @@ Missing properties
 leave the corresponding module default unchanged.
 The same rule applies to
 explicit parameters -- omitting a parameter does not reset its module default.
+
+Log Analytics validation:
+    When LogAnalyticsEnabled is $true (either set on this call or already
+    on from a prior call), the cmdlet validates that DcrEndpointUri,
+    DcrImmutableId, DcrStreamName, and an authentication method are all
+    configured.
+Missing fields surface as a single non-terminating error
+    listing every gap.
+Supplied parameters are still committed to module
+    state -- callers may complete the configuration on a follow-up call
+    without restarting -- but Send-DJMLogBuffer will fail at flush time
+    until every required field is in place.
 
 When any Log Analytics parameter is set, the circuit breaker state is reset
 (FlushFailureCount = 0, AutoFlushDisabled = $false).
@@ -303,7 +315,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 22
+  Position: 23
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -449,6 +461,34 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -MaxBufferBytes
+
+Maximum total serialised size of the buffer in bytes.
+When adding a new
+entry would push the running total past this cap, the oldest entries are
+dropped (FIFO) until the new entry fits.
+Set to 0 to disable the byte
+cap (count cap from MaxBufferSize still applies).
+Defaults to 52428800
+bytes (50 MB).
+
+```yaml
+Type: System.Int64
+DefaultValue: 0
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: 21
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### -MaxBufferSize
 
 Maximum number of entries the buffer can hold.
@@ -487,7 +527,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 21
+  Position: 22
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false

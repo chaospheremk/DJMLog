@@ -2,6 +2,7 @@
 # ($script:InternalErrors) with FIFO eviction at $script:InternalErrorsMaxSize.
 # Surfaced to callers via Get-DJMLogDiagnostics.
 function Add-DJMInternalError {
+    [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
         [string]$Source,

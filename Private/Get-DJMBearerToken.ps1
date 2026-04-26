@@ -61,32 +61,56 @@ function Get-DJMBearerToken {
     $body = $null
 
     # 3. Certificate auth (thumbprint or subject)
+    # Both paths apply the same predicate: NotAfter > UtcNow, HasPrivateKey,
+    # key size >= 2048 bits. Whichever candidate has the latest NotAfter wins.
     $cert = $null
+    $minKeySize = 2048
+
+    $isUsableCert = {
+        param ($Candidate)
+        if (-not $Candidate) { return $false }
+        if (-not $Candidate.HasPrivateKey) { return $false }
+        if ($Candidate.NotAfter -le [datetime]::UtcNow) { return $false }
+        # Key size: PublicKey.Key.KeySize is the standard accessor on X509Certificate2.
+        $keySize = $null
+        try {
+            if ($Candidate.PublicKey -and $Candidate.PublicKey.Key) {
+                $keySize = $Candidate.PublicKey.Key.KeySize
+            }
+        }
+        catch { $keySize = $null }
+        if ($null -ne $keySize -and $keySize -lt $minKeySize) { return $false }
+        $true
+    }
+
     if ($script:CertificateThumbprint) {
+        $candidates = [System.Collections.Generic.List[object]]::new()
         foreach ($storeLocation in @('LocalMachine', 'CurrentUser')) {
             $storePath = "Cert:\$storeLocation\My\$($script:CertificateThumbprint)"
-            $cert = Get-Item -LiteralPath $storePath -ErrorAction SilentlyContinue
-            if ($cert -and $cert.HasPrivateKey) { break }
-            $cert = $null
+            $found = Get-Item -LiteralPath $storePath -ErrorAction SilentlyContinue
+            if ($found -and (& $isUsableCert $found)) {
+                $candidates.Add($found)
+            }
         }
-        if (-not $cert) {
-            Write-Warning "Get-DJMBearerToken: no certificate with thumbprint '$($script:CertificateThumbprint)' and a private key was found."
+        if ($candidates.Count -eq 0) {
+            Write-Warning "Get-DJMBearerToken: no valid certificate (not expired, has private key, key size >= $minKeySize bits) was found for thumbprint '$($script:CertificateThumbprint)'."
             return
         }
+        $cert = ($candidates | Sort-Object -Property NotAfter -Descending)[0]
     }
     elseif ($script:CertificateSubject) {
-        $candidates = [System.Collections.Generic.List[System.Security.Cryptography.X509Certificates.X509Certificate2]]::new()
+        $candidates = [System.Collections.Generic.List[object]]::new()
         foreach ($storeLocation in @('LocalMachine', 'CurrentUser')) {
             $storePath = "Cert:\$storeLocation\My"
             $found = Get-ChildItem -Path $storePath -ErrorAction SilentlyContinue
             foreach ($c in $found) {
-                if ($c.Subject -eq $script:CertificateSubject -and $c.NotAfter -gt [datetime]::UtcNow -and $c.HasPrivateKey) {
+                if ($c.Subject -eq $script:CertificateSubject -and (& $isUsableCert $c)) {
                     $candidates.Add($c)
                 }
             }
         }
         if ($candidates.Count -eq 0) {
-            Write-Warning "Get-DJMBearerToken: no valid certificate with subject '$($script:CertificateSubject)' was found."
+            Write-Warning "Get-DJMBearerToken: no valid certificate (not expired, has private key, key size >= $minKeySize bits) with subject '$($script:CertificateSubject)' was found."
             return
         }
         # Pick the one with the latest NotAfter (most recently issued)
@@ -180,9 +204,17 @@ function Get-DJMBearerToken {
         return
     }
 
-    # Acquire token
+    # Acquire token via the shared retry helper so transient throttling doesn't
+    # hammer the circuit breaker on the first failure.
     try {
-        $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $body -ContentType 'application/x-www-form-urlencoded' -ErrorAction Stop
+        $retryParams = @{
+            Uri         = $tokenUrl
+            Method      = 'POST'
+            Body        = $body
+            ContentType = 'application/x-www-form-urlencoded'
+            MaxRetries  = 5
+        }
+        $response = Invoke-DJMRestMethodWithRetry @retryParams
         if (-not $response.access_token -or -not $response.expires_in) {
             Write-Warning 'Get-DJMBearerToken: token endpoint returned an incomplete response (missing access_token or expires_in).'
             Add-DJMInternalError -Source 'Get-DJMBearerToken' -Message 'Token endpoint returned incomplete response (missing access_token or expires_in)'

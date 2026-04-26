@@ -49,12 +49,12 @@ Describe 'ConvertTo-DJMDictionary' {
             $result.ContainsKey('spaced') | Should -BeTrue
         }
 
-        It 'emits a non-terminating error for duplicate keys' {
+        It 'emits a non-terminating error for duplicate keys when -OnDuplicateKey Error is supplied' {
             $objects = @(
                 [PSCustomObject]@{ Name = 'Alice'; Role = 'Admin' }
                 [PSCustomObject]@{ Name = 'Alice'; Role = 'User'  }
             )
-            { $objects | ConvertTo-DJMDictionary -KeyProperty 'Name' -ErrorAction Stop } |
+            { $objects | ConvertTo-DJMDictionary -KeyProperty 'Name' -OnDuplicateKey Error -ErrorAction Stop } |
                 Should -Throw
         }
 
@@ -77,6 +77,39 @@ Describe 'ConvertTo-DJMDictionary' {
                 [PSCustomObject]@{ Code = 'C'; Val = 3 }
             ) | ConvertTo-DJMDictionary -KeyProperty 'Code'
             $result.Count | Should -Be 3
+        }
+    }
+
+    Context 'OnDuplicateKey FromObjectList (M6)' {
+
+        It 'default (Overwrite): second object wins on duplicate key, no error' {
+            $objects = @(
+                [PSCustomObject]@{ Name = 'Alice'; Role = 'Admin' }
+                [PSCustomObject]@{ Name = 'Alice'; Role = 'User'  }
+            )
+            $result = $objects | ConvertTo-DJMDictionary -KeyProperty 'Name' -OnDuplicateKey 'Overwrite' -ErrorVariable dupErr -ErrorAction SilentlyContinue
+            $dupErr | Should -BeNullOrEmpty
+            $result['alice'].Role | Should -Be 'User'
+        }
+
+        It 'Error: first object is kept and a non-terminating error is emitted' {
+            $objects = @(
+                [PSCustomObject]@{ Name = 'Bob'; Role = 'Admin' }
+                [PSCustomObject]@{ Name = 'Bob'; Role = 'Guest' }
+            )
+            $result = $objects | ConvertTo-DJMDictionary -KeyProperty 'Name' -OnDuplicateKey 'Error' -ErrorVariable dupErr -ErrorAction SilentlyContinue
+            $dupErr | Should -Not -BeNullOrEmpty
+            $result['bob'].Role | Should -Be 'Admin'
+        }
+
+        It 'KeepFirst: first object is kept and no error is emitted' {
+            $objects = @(
+                [PSCustomObject]@{ Name = 'Carol'; Role = 'Admin' }
+                [PSCustomObject]@{ Name = 'Carol'; Role = 'Guest' }
+            )
+            $result = $objects | ConvertTo-DJMDictionary -KeyProperty 'Name' -OnDuplicateKey 'KeepFirst' -ErrorVariable dupErr -ErrorAction SilentlyContinue
+            $dupErr | Should -BeNullOrEmpty
+            $result['carol'].Role | Should -Be 'Admin'
         }
     }
 }
