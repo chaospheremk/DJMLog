@@ -163,9 +163,13 @@ HelpMessage: ''
 ### -AppSecret
 
 Client secret for the app registration.
-Accepts a plain string or
-SecureString.
-SecureString is converted internally for the OAuth2 flow.
+SecureString input is preferred
+and is stored as-is.
+Plain-string input is accepted for back-compat but
+converted to a SecureString on assignment so the module never retains the
+plaintext at script scope.
+The plain-string input path is deprecated and
+will be removed in v2.x — pass [SecureString] going forward.
 Use certificate auth in production; this is a dev/test fallback.
 
 ```yaml
@@ -693,6 +697,10 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 ## INPUTS
 
 ## OUTPUTS
+
+### System.Void
+
+
 
 ## NOTES
 

@@ -112,8 +112,11 @@ function Set-DJMLogConfig {
     Application (client) ID of the Entra ID app registration.
 
     .PARAMETER AppSecret
-    Client secret for the app registration. Accepts a plain string or
-    SecureString. SecureString is converted internally for the OAuth2 flow.
+    Client secret for the app registration. SecureString input is preferred
+    and is stored as-is. Plain-string input is accepted for back-compat but
+    converted to a SecureString on assignment so the module never retains the
+    plaintext at script scope. The plain-string input path is deprecated and
+    will be removed in v2.x — pass [SecureString] going forward.
     Use certificate auth in production; this is a dev/test fallback.
 
     .PARAMETER CertificateSubject
@@ -194,6 +197,7 @@ function Set-DJMLogConfig {
     Set-DJMLogConfig @params
     #>
     [CmdletBinding()]
+    [OutputType([void])]
     param (
         [string]$Path,
 
@@ -410,12 +414,20 @@ function Set-DJMLogConfig {
         $laParamTouched = $true
     }
     if ($PSBoundParameters.ContainsKey('AppSecret')           -or ($ConfigPath -and $null -ne $AppSecret)) {
-        # Convert SecureString to SecureString (keep as-is); convert plain string to store directly
+        # Always store as SecureString. Plain-string input is supported for back-compat
+        # but converted on assignment so $script:AppSecret never holds plaintext.
+        # The string-input path is deprecated; prefer SecureString.
         if ($AppSecret -is [System.Security.SecureString]) {
             $script:AppSecret = $AppSecret
         }
         else {
-            $script:AppSecret = [string]$AppSecret
+            $plain = [string]$AppSecret
+            if ([string]::IsNullOrEmpty($plain)) {
+                $script:AppSecret = $null
+            }
+            else {
+                $script:AppSecret = ConvertTo-SecureString -String $plain -AsPlainText -Force
+            }
         }
         $laParamTouched = $true
     }

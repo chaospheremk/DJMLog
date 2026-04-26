@@ -44,6 +44,7 @@ function ConvertTo-DJMDictionary {
     }
     #>
     [CmdletBinding()]
+    [OutputType([System.Collections.Generic.Dictionary[string, PSObject]])]
     param (
         [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'FromObjectList')]
         [PSObject]$InputObject,

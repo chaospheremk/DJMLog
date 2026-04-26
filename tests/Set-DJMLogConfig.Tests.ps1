@@ -259,9 +259,13 @@ Describe 'Set-DJMLogConfig' {
             InModuleScope DJMLog { $script:AppId } | Should -Be 'app-xyz'
         }
 
-        It 'sets AppSecret as string' {
+        It 'converts a plain-string AppSecret to SecureString on assignment (ADR-015)' {
             Set-DJMLogConfig -AppSecret 'my-secret'
-            InModuleScope DJMLog { $script:AppSecret } | Should -Be 'my-secret'
+            InModuleScope DJMLog { $script:AppSecret -is [System.Security.SecureString] } | Should -BeTrue
+            $roundtripped = InModuleScope DJMLog {
+                [System.Net.NetworkCredential]::new('', $script:AppSecret).Password
+            }
+            $roundtripped | Should -Be 'my-secret'
         }
 
         It 'sets AppSecret as SecureString' {

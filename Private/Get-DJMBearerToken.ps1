@@ -131,6 +131,7 @@ function Get-DJMBearerToken {
         }
         catch {
             Write-Warning "Get-DJMBearerToken: failed to sign JWT assertion: $_"
+            Add-DJMInternalError -Source 'Get-DJMBearerToken' -Message 'JWT assertion signing failed' -Exception $_.Exception
             return
         }
 
@@ -145,19 +146,33 @@ function Get-DJMBearerToken {
         }
     }
     elseif ($script:AppSecret) {
-        # 4. Client secret flow
-        $plainSecret = if ($script:AppSecret -is [System.Security.SecureString]) {
-            [System.Net.NetworkCredential]::new('', $script:AppSecret).Password
-        }
-        else {
-            [string]$script:AppSecret
-        }
+        # 4. Client secret flow.
+        # Pull the plaintext into a local [char[]] via NetworkCredential, build the
+        # body, then zero the buffer in finally so the secret leaves the process
+        # heap as soon as the request body is constructed. The body hashtable still
+        # holds the string until Invoke-RestMethod runs; that is unavoidable without
+        # a managed-identity path (deferred to v2.x per the roadmap).
+        $secretBuf = $null
+        try {
+            if ($script:AppSecret -is [System.Security.SecureString]) {
+                $netCred   = [System.Net.NetworkCredential]::new('', $script:AppSecret)
+                $secretBuf = $netCred.Password.ToCharArray()
+            }
+            else {
+                # Back-compat: string input was already converted to SecureString in
+                # Set-DJMLogConfig, but if a caller bypassed that path we still cope.
+                $secretBuf = ([string]$script:AppSecret).ToCharArray()
+            }
 
-        $body = @{
-            grant_type    = 'client_credentials'
-            client_id     = $script:AppId
-            client_secret = $plainSecret
-            scope         = $tokenScope
+            $body = @{
+                grant_type    = 'client_credentials'
+                client_id     = $script:AppId
+                client_secret = [string]::new($secretBuf)
+                scope         = $tokenScope
+            }
+        }
+        finally {
+            if ($secretBuf) { [System.Array]::Clear($secretBuf, 0, $secretBuf.Length) }
         }
     }
     else {
@@ -170,6 +185,7 @@ function Get-DJMBearerToken {
         $response = Invoke-RestMethod -Uri $tokenUrl -Method POST -Body $body -ContentType 'application/x-www-form-urlencoded' -ErrorAction Stop
         if (-not $response.access_token -or -not $response.expires_in) {
             Write-Warning 'Get-DJMBearerToken: token endpoint returned an incomplete response (missing access_token or expires_in).'
+            Add-DJMInternalError -Source 'Get-DJMBearerToken' -Message 'Token endpoint returned incomplete response (missing access_token or expires_in)'
             return
         }
         $script:BearerToken = $response.access_token
@@ -178,6 +194,7 @@ function Get-DJMBearerToken {
     }
     catch {
         Write-Warning "Get-DJMBearerToken: token acquisition failed: $_"
+        Add-DJMInternalError -Source 'Get-DJMBearerToken' -Message "Token acquisition failed: $($_.Exception.Message)" -Exception $_.Exception
         return
     }
 }

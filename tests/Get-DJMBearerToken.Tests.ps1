@@ -157,4 +157,58 @@ Describe 'Get-DJMBearerToken' {
             $result | Should -BeNullOrEmpty
         }
     }
+
+    Context 'Secret hygiene (C6)' {
+
+        BeforeEach {
+            InModuleScope DJMLog {
+                $script:DefaultLogPath          = $null
+                $script:DefaultMaxSizeMB        = 0
+                $script:DefaultMutexTimeoutMs   = 2000
+                $script:DefaultMinLevel         = 'DEBUG'
+                $script:DefaultRotationSchedule = 'None'
+                $script:DefaultRetainDays       = 0
+                $script:DefaultRetainFiles      = 0
+                $script:DefaultIncludeCaller    = $true
+                $script:LogAnalyticsEnabled     = $false
+                $script:CloudEnvironment        = 'GCCHigh'
+                $script:DcrEndpointUri          = $null
+                $script:DcrImmutableId          = $null
+                $script:DcrStreamName           = $null
+                $script:TenantId                = $null
+                $script:AppId                   = $null
+                $script:AppSecret               = $null
+                $script:CertificateSubject      = $null
+                $script:CertificateThumbprint   = $null
+                $script:BearerTokenExternal     = $null
+                $script:FlushThreshold          = 100
+                $script:MaxBufferSize           = 5000
+                $script:MaxFlushRetries         = 3
+                $script:FlushFailureCount       = 0
+                $script:AutoFlushDisabled       = $false
+            }
+        }
+
+        It 'stores a SecureString AppSecret as SecureString in module state' {
+            # PSScriptAnalyzer: ConvertTo-SecureString with -AsPlainText is intentional in test context
+            $secure = ConvertTo-SecureString 'p@ss' -AsPlainText -Force
+            Set-DJMLogConfig -AppSecret $secure
+            $isSecureString = InModuleScope DJMLog { $script:AppSecret -is [System.Security.SecureString] }
+            $isSecureString | Should -BeTrue
+        }
+
+        It 'converts a plain string AppSecret to SecureString on assignment' {
+            Set-DJMLogConfig -AppSecret 'plainsecret'
+            $isSecureString = InModuleScope DJMLog { $script:AppSecret -is [System.Security.SecureString] }
+            $isSecureString | Should -BeTrue
+        }
+
+        It 'round-trips the plain string secret through SecureString without data loss' {
+            Set-DJMLogConfig -AppSecret 'plainsecret'
+            $plainBack = InModuleScope DJMLog {
+                [System.Net.NetworkCredential]::new('', $script:AppSecret).Password
+            }
+            $plainBack | Should -Be 'plainsecret'
+        }
+    }
 }

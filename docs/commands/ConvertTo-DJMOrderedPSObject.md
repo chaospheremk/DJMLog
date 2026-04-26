@@ -84,6 +84,10 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 
 
+### System.Management.Automation.PSObject
+
+
+
 ## NOTES
 
 ## RELATED LINKS
