@@ -106,7 +106,17 @@ jobs:
 
       - name: Run tests
         shell: pwsh
-        run: Invoke-Build Test -Configuration Release
+        # Explicit exit after Invoke-Build because the v2.0 async writer's
+        # PowerShell pipeline thread is foreground and PowerShell does not
+        # expose a knob to mark it background reliably across repeated
+        # Pester Import-Module -Force cycles. Without `exit` the pwsh
+        # subprocess hangs ~19 min after the test step until the runner
+        # cancels it. The Test task already does Stop-DJMWriter +
+        # Remove-Module on the LAST module instance for hygiene; this
+        # `exit` is the safety net for any lingering pool threads.
+        run: |
+          try { Invoke-Build Test -Configuration Release; exit 0 }
+          catch { Write-Host $_; exit 1 }
 
       - name: Upload test results
         if: always()

@@ -117,6 +117,23 @@ task Test {
         Write-Build Green "Code coverage: $coveragePct% (threshold: $threshold%)"
         assert ($coveragePct -ge $threshold) "Coverage $coveragePct% is below the $threshold% threshold."
     }
+
+    # Pester loads/unloads DJMLog many times during a test run. The LAST
+    # instance it loaded has a foreground writer pipeline thread that
+    # PowerShell does not let us mark IsBackground reliably across the
+    # repeated Import-Module -Force cycles. Without explicit teardown here
+    # the pwsh subprocess running this Test task hangs ~19 min on
+    # `pwsh -Command "Invoke-Build Test"` until GitHub Actions cancels the
+    # job. Force-stop + remove + write XMLs + Environment.Exit is the
+    # reliable shutdown path.
+    try {
+        $loaded = Get-Module DJMLog -ErrorAction SilentlyContinue
+        if ($loaded) {
+            & $loaded { Stop-DJMWriter -TimeoutMs 2000 }
+            Remove-Module DJMLog -Force -ErrorAction SilentlyContinue
+        }
+    }
+    catch { Write-Build Yellow "Test cleanup: $($_.Exception.Message)" }
 }
 
 task Docs {

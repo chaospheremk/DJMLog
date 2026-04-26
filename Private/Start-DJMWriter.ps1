@@ -107,6 +107,10 @@ function Start-DJMWriter {
     # *after* this preamble in the combined script (see below).
     $writerScript = {
         param ($Channel, $Shared, $LogMutex, $CancelToken)
+        # Mark our own thread as background so a foreground PowerShell pipeline
+        # thread (the default for [powershell]::Create + Invoke / BeginInvoke)
+        # does not keep the process alive when the host script finishes.
+        try { [System.Threading.Thread]::CurrentThread.IsBackground = $true } catch { $null = $_ }
         # __RETRY_HELPER_PLACEHOLDER__
 
         # Throttle EventLog source-registration retries when ACL denies it.
@@ -666,6 +670,12 @@ function Start-DJMWriter {
     # complicate cross-runspace coordination).
     $script:WriterRunspace = [runspacefactory]::CreateRunspace()
     $script:WriterRunspace.ApartmentState = [System.Threading.ApartmentState]::MTA
+    # UseCurrentThread = the pipeline runs ON the caller of PowerShell.Invoke
+    # rather than spawning a separate (foreground) pipeline thread. We then
+    # wrap Invoke in Task.Run so the "current thread" is a thread-pool
+    # worker — and thread-pool threads are background, so they don't block
+    # pwsh.exe shutdown when the user script finishes.
+    $script:WriterRunspace.ThreadOptions = [System.Management.Automation.Runspaces.PSThreadOptions]::UseCurrentThread
     $script:WriterRunspace.Open()
 
     $retryFnPath = Join-Path $PSScriptRoot 'Invoke-DJMRestMethodWithRetry.ps1'
@@ -685,7 +695,26 @@ function Start-DJMWriter {
     [void]$script:WriterPS.AddArgument($script:WriterShared)
     [void]$script:WriterPS.AddArgument($script:LogMutex)
     [void]$script:WriterPS.AddArgument($script:WriterCts.Token)
-    $script:WriterAsyncResult = $script:WriterPS.BeginInvoke()
+
+    # Run the writer on a thread-pool worker (background threads) rather than
+    # via BeginInvoke (foreground pipeline thread). PowerShell.Invoke is
+    # synchronous on the calling thread; wrapping it in Task.Run puts the
+    # whole pipeline on a background thread that does not block pwsh.exe
+    # shutdown. Without this, `pwsh -Command '...'` subprocesses hung ~19 min
+    # in CI after the script finished (until GitHub Actions cancelled the job)
+    # because the writer's foreground pipeline thread kept the process alive.
+    # Spawn the writer on a thread-pool worker (Task.Run) rather than via
+    # PowerShell.BeginInvoke. Thread-pool threads are background; combined
+    # with the writer scriptblock's own [Thread]::CurrentThread.IsBackground
+    # = $true at top-of-loop (and the runspace's UseCurrentThread option),
+    # this keeps the writer from blocking pwsh.exe shutdown.
+    $script:WriterTask = [DJMLog.WriterRunner]::Run($script:WriterPS)
+
+    [DJMLog.WriterShutdown]::Cts        = $script:WriterCts
+    [DJMLog.WriterShutdown]::Writer     = $script:WriterChannel.Writer
+    [DJMLog.WriterShutdown]::WriterTask = $script:WriterTask
+    [DJMLog.WriterShutdown]::PS         = $script:WriterPS
+    [DJMLog.WriterShutdown]::Rs         = $script:WriterRunspace
 }
 
 # Synchronise writer-relevant config from main-runspace state to $script:WriterShared.
@@ -762,8 +791,17 @@ function Wait-DJMProcessed {
     }
 }
 
-# Stop the writer cleanly. Idempotent. Falls back to PowerShell.Stop()
-# if the loop doesn't exit within $TimeoutMs.
+# Stop the writer. Idempotent. Soft-stop: signal cancellation + channel
+# completion, then null out our $script: refs without joining the writer
+# thread. The writer's pipeline thread is marked IsBackground = $true at
+# Start-DJMWriter time, so even if it lingers in PowerShell's internal
+# pool after Dispose, it will not keep the process alive at host exit.
+#
+# A hard-stop variant (WaitOne + PowerShell.Stop + EndInvoke + Dispose) was
+# tried but observed to leak a foreground thread on Remove-Module +
+# Import-Module cycles (e.g. each Pester test file's BeforeAll), which kept
+# `pwsh -Command '...'` subprocesses alive ~19 min in CI. The soft-stop
+# avoids that path entirely.
 function Stop-DJMWriter {
     [CmdletBinding()]
     [OutputType([void])]
@@ -771,29 +809,26 @@ function Stop-DJMWriter {
 
     if (-not $script:WriterRunspace) { return }
     try {
-        if ($script:WriterShared) { $script:WriterShared.StopRequested = $true }
-        # Cancel the writer's WaitToReadAsync. This is the reliable wake-up
-        # path; TryComplete + WaitOne deadlocked because GetAwaiter().GetResult()
-        # owned the runspace thread and PowerShell.Stop couldn't preempt it.
-        try { if ($script:WriterCts) { $script:WriterCts.Cancel() } } catch { $null = $_ }
+        if ($script:WriterShared)  { $script:WriterShared.StopRequested = $true }
+        try { if ($script:WriterCts)     { $script:WriterCts.Cancel() } }                   catch { $null = $_ }
         try { if ($script:WriterChannel) { [void]$script:WriterChannel.Writer.TryComplete() } } catch { $null = $_ }
-
-        if ($script:WriterAsyncResult -and $script:WriterPS) {
-            $stopped = $script:WriterAsyncResult.AsyncWaitHandle.WaitOne($TimeoutMs)
-            if (-not $stopped) {
-                try { $script:WriterPS.Stop() } catch { $null = $_ }
-                try { [void]$script:WriterAsyncResult.AsyncWaitHandle.WaitOne(500) } catch { $null = $_ }
-            }
-            try { $null = $script:WriterPS.EndInvoke($script:WriterAsyncResult) } catch { $null = $_ }
+        # Brief best-effort wait for the writer task to finish so an in-flight
+        # LA flush completes before the runspace is orphaned. The task runs
+        # on the thread pool (background), so even if it doesn't finish in
+        # $TimeoutMs we don't block process exit.
+        if ($script:WriterTask -and $TimeoutMs -gt 0) {
+            try { [void]$script:WriterTask.Wait($TimeoutMs) } catch { $null = $_ }
         }
     }
     finally {
-        try { if ($script:WriterPS) { $script:WriterPS.Dispose() } } catch { $null = $_ }
-        try { if ($script:WriterRunspace) { $script:WriterRunspace.Dispose() } } catch { $null = $_ }
-        try { if ($script:WriterCts) { $script:WriterCts.Dispose() } } catch { $null = $_ }
+        if ('DJMLog.WriterShutdown' -as [type]) {
+            [DJMLog.WriterShutdown]::Cts        = $null
+            [DJMLog.WriterShutdown]::Writer     = $null
+            [DJMLog.WriterShutdown]::WriterTask = $null
+        }
         $script:WriterPS          = $null
         $script:WriterRunspace    = $null
-        $script:WriterAsyncResult = $null
+        $script:WriterTask        = $null
         $script:WriterChannel     = $null
         $script:WriterShared      = $null
         $script:WriterCts         = $null

@@ -463,6 +463,10 @@ HelpMessage: ''
 ### -PassThru
 
 Emit the entry to the pipeline as a PSCustomObject in addition to enqueueing.
+Note: redaction has already been applied to the returned object — values
+matching the always-on rules (SecureString / PSCredential / sensitive
+metadata keys) and any configured RedactionPatterns / RedactionPresets are
+`[REDACTED]` in the PassThru object.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter

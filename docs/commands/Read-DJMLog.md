@@ -108,7 +108,7 @@ Defaults to log.csv in the current directory.
 
 ```yaml
 Type: System.String
-DefaultValue: '"$(Get-Location)\log.csv"'
+DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
 ParameterSets:

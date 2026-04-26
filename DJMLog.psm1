@@ -38,7 +38,7 @@ $script:WriterChannel            = $null
 $script:WriterShared             = $null
 $script:WriterRunspace           = $null
 $script:WriterPS                 = $null
-$script:WriterAsyncResult        = $null
+$script:WriterTask               = $null
 
 # Activity stack (v2.0 — ADR-021)
 $script:ActivityStack            = $null     # lazily allocated per runspace
@@ -93,19 +93,78 @@ $script:BufferLock               = [System.Threading.SemaphoreSlim]::new(1, 1)
 # Named OS mutex shared across all runspaces on this machine.
 $script:LogMutex                 = [System.Threading.Mutex]::new($false, 'DJMLog_WriteAccess')
 
-# Dispose mutex + semaphore + writer when module is removed.
+# Module-removal cleanup. Do NOT call Stop-DJMWriter or otherwise tear down
+# the writer here — under repeated Import-Module -Force cycles (which Pester
+# does on every test file's BeforeAll) the dispose path leaks a foreground
+# pipeline thread, which then keeps the host process alive after the script
+# finishes (CI-observed: ~19 min hang per run before GitHub cancels). Instead
+# we soft-cancel the writer's CancellationTokenSource and let the writer
+# thread (already marked IsBackground via reflection in Start-DJMWriter) exit
+# in the background.
 $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
-    try { Stop-DJMWriter -TimeoutMs 2000 } catch { $null = $_ }
+    try { if ($script:WriterCts) { $script:WriterCts.Cancel() } } catch { $null = $_ }
+    try { if ($script:WriterChannel) { [void]$script:WriterChannel.Writer.TryComplete() } } catch { $null = $_ }
     if ($script:LogMutex)   { try { $script:LogMutex.Dispose() }   catch { $null = $_ } }
     if ($script:BufferLock) { try { $script:BufferLock.Dispose() } catch { $null = $_ } }
 }
 
-# Note: a previous draft registered a PowerShell.Exiting engine-event handler
-# to flush + stop the writer on host shutdown. That introduced a race with the
-# OnRemove handler above when both fired during script teardown and could leave
-# the writer half-disposed. OnRemove is sufficient — Remove-Module fires it on
-# normal teardown and the runspace exits without issue when the host process
-# dies otherwise.
+# Process-exit shutdown — without a hook here, the writer runspace's
+# foreground pipeline thread keeps pwsh.exe alive indefinitely after the main
+# script finishes (CI observation: pwsh subprocess hung ~19 min after the
+# Test task returned until GitHub Actions cancelled the job).
+#
+# AppDomain.ProcessExit fires on host shutdown but runs on a thread that has
+# no PowerShell runspace, so a PowerShell scriptblock cast to EventHandler
+# throws "There is no Runspace available". We compile a tiny C# helper whose
+# static method does the cleanup using a holder that the module populates,
+# bypassing the runspace requirement entirely.
+if (-not ('DJMLog.WriterShutdown' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System.Management.Automation;
+using System.Management.Automation.Runspaces;
+using System.Threading;
+using System.Threading.Tasks;
+namespace DJMLog {
+    public static class WriterRunner {
+        // Run the writer's PowerShell instance synchronously on a thread-pool
+        // worker. Thread-pool threads are background, so they do not block
+        // pwsh.exe shutdown when the user's script finishes.
+        public static Task Run(PowerShell ps) {
+            return Task.Run(() => {
+                try { ps.Invoke(); }
+                catch { /* exceptions surface via ps.Streams.Error */ }
+            });
+        }
+    }
+    public static class WriterShutdown {
+        // Set by Start-DJMWriter; the static Hook is registered on
+        // AppDomain.ProcessExit at module load. On host shutdown we cancel,
+        // complete the channel, briefly wait for the writer task, then
+        // dispose the PowerShell + Runspace so the .NET host can finalise.
+        public static CancellationTokenSource Cts;
+        public static System.Threading.Channels.ChannelWriter<object> Writer;
+        public static Task WriterTask;
+        public static PowerShell PS;
+        public static Runspace Rs;
+        public static void Hook(object sender, System.EventArgs e) {
+            // Keep this fast — the AppDomain.ProcessExit hook runs in-band
+            // during Environment.Exit and blocks process termination until
+            // it returns. PowerShell.Stop/Dispose can block on internal
+            // pipeline state and have caused 19+ minute hangs in CI.
+            // Just signal cancellation so the writer thread (if still alive)
+            // exits on its own; the process is shutting down anyway.
+            try { if (Cts    != null) Cts.Cancel(); }        catch { }
+            try { if (Writer != null) Writer.TryComplete(); } catch { }
+        }
+    }
+}
+'@ -ReferencedAssemblies @(
+        'System.Management.Automation',
+        'System.Threading.Channels'
+    )
+    [System.AppDomain]::CurrentDomain.add_ProcessExit(
+        [System.EventHandler][DJMLog.WriterShutdown]::Hook)
+}
 
 # Dot-source all private helpers then all public functions. Wrap each in
 # try/catch so a single bad file leaves the module usable for the rest. Failures
