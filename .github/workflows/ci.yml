@@ -83,25 +83,7 @@ jobs:
       image: mcr.microsoft.com/powershell:${{ matrix.pwsh }}-ubuntu-22.04
     permissions:
       contents: read
-      checks: write
     steps:
-      # The mcr.microsoft.com/powershell:7.5-ubuntu-22.04 image ships without
-      # git. actions/checkout falls back to a REST tarball download in that
-      # case, which leaves no .git directory — and dorny/test-reporter then
-      # fails with `fatal: not a git repository`. Install git BEFORE checkout
-      # so the working tree is a real repo. Apply unconditionally so 7.4 stays
-      # consistent.
-      - name: Install git
-        run: |
-          if ! command -v git >/dev/null 2>&1; then
-              apt-get update && apt-get install -y --no-install-recommends git ca-certificates
-          fi
-          # actions/checkout writes files under one UID; subsequent steps may
-          # invoke git as root via the docker exec layer. Mark the workspace
-          # safe so dorny/test-reporter's `git ls-files` doesn't trip git's
-          # dubious-ownership protection.
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Install build dependencies
@@ -125,14 +107,6 @@ jobs:
       - name: Run tests
         shell: pwsh
         run: Invoke-Build Test -Configuration Release
-
-      - name: Publish test results
-        if: always() && matrix.pwsh == '7.5'
-        uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3
-        with:
-          name: Pester Tests
-          path: TestResults.xml
-          reporter: java-junit
 
       - name: Upload test results
         if: always()
