@@ -106,17 +106,24 @@ jobs:
 
       - name: Run tests
         shell: pwsh
-        # Explicit exit after Invoke-Build because the v2.0 async writer's
-        # PowerShell pipeline thread is foreground and PowerShell does not
-        # expose a knob to mark it background reliably across repeated
-        # Pester Import-Module -Force cycles. Without `exit` the pwsh
-        # subprocess hangs ~19 min after the test step until the runner
-        # cancels it. The Test task already does Stop-DJMWriter +
-        # Remove-Module on the LAST module instance for hygiene; this
-        # `exit` is the safety net for any lingering pool threads.
+        # Explicit [Environment]::Exit after Invoke-Build because the v2.0
+        # async writer's PowerShell pipeline thread is foreground and
+        # PowerShell does not expose a knob to mark it background reliably
+        # across repeated Pester Import-Module -Force cycles. Without this
+        # exit call the pwsh subprocess hangs ~19 min after the test step
+        # until the runner cancels it. PowerShell's own `exit` keyword goes
+        # through flow-control machinery that respects the writer thread;
+        # [Environment]::Exit forces the .NET host down regardless of
+        # foreground threads, which is what we need here.
         run: |
-          try { Invoke-Build Test -Configuration Release; exit 0 }
-          catch { Write-Host $_; exit 1 }
+          try {
+              Invoke-Build Test -Configuration Release
+              [System.Environment]::Exit(0)
+          }
+          catch {
+              Write-Host $_
+              [System.Environment]::Exit(1)
+          }
 
       - name: Upload test results
         if: always()
