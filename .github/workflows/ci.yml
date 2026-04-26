@@ -85,6 +85,18 @@ jobs:
       contents: read
       checks: write
     steps:
+      # The mcr.microsoft.com/powershell:7.5-ubuntu-22.04 image ships without
+      # git. actions/checkout falls back to a REST tarball download in that
+      # case, which leaves no .git directory — and dorny/test-reporter then
+      # fails with `fatal: not a git repository`. Install git BEFORE checkout
+      # so the working tree is a real repo. Apply unconditionally so 7.4 stays
+      # consistent.
+      - name: Install git
+        run: |
+          if ! command -v git >/dev/null 2>&1; then
+              apt-get update && apt-get install -y --no-install-recommends git ca-certificates
+          fi
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Install build dependencies
@@ -108,17 +120,6 @@ jobs:
       - name: Run tests
         shell: pwsh
         run: Invoke-Build Test -Configuration Release
-
-      # dorny/test-reporter shells out to git inside the job container. The
-      # mcr.microsoft.com/powershell:7.5-ubuntu-22.04 image ships without git,
-      # so install it here before the reporter runs. (7.4's image already has
-      # git, but we run the reporter only on 7.5 so this step covers it.)
-      - name: Install git for test-reporter
-        if: always() && matrix.pwsh == '7.5'
-        run: |
-          if ! command -v git >/dev/null 2>&1; then
-              apt-get update && apt-get install -y --no-install-recommends git ca-certificates
-          fi
 
       - name: Publish test results
         if: always() && matrix.pwsh == '7.5'
