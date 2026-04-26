@@ -23,7 +23,7 @@ Reads and filters a JSONL log file produced by Write-DJMLog.
 Read-DJMLog [[-LogPath] <string>] [[-Level] <string[]>] [[-CorrelationId] <string>]
  [[-MessageContains] <string>] [[-Since] <datetime>] [[-Until] <datetime>] [[-First] <int>]
  [[-Last] <int>] [[-CsvPath] <string>] [-Colorize] [-ExportCsv] [-OutGridView] [-Raw] [-PassThru]
- [<CommonParameters>]
+ [-Stream] [<CommonParameters>]
 ```
 
 ## ALIASES
@@ -31,99 +31,37 @@ Read-DJMLog [[-LogPath] <string>] [[-Level] <string[]>] [[-CorrelationId] <strin
 None.
 ## DESCRIPTION
 
-Streams the target file line by line using [System.IO.File]::ReadLines,
-keeping memory usage flat regardless of file size.
-Each line is parsed
-as a JSON object.
-Lines that cannot be parsed, have an invalid timestamp,
-or are missing Level or Message are skipped with a warning.
+Streams the target file line by line using [System.IO.File]::ReadLines.
 
-Filtering is applied before object construction.
-All active filters must
-match for an entry to be included.
--First and -Last are applied after all
-other filters have been evaluated.
--First and -Last cannot be combined;
-if both are supplied, -First is honoured and a warning is emitted.
+Schema awareness (v2.0+):
+    Read-DJMLog auto-detects per-entry SchemaVersion.
+When SchemaVersion is
+    absent the entry is treated as schema v1; missing SeverityNumber is
+    backfilled from the Level string.
+v2 entries pass through unchanged.
 
-Metadata flattening:
-    Nested Metadata properties are recursively promoted to top-level
-    columns using underscore-separated key paths.
-Flattening descends
-    through all levels of nesting.
-For example:
-        Metadata.Error.Message      -> Error_Message
-        Metadata.Http.Response.Code -> Http_Response_Code
-
-Column normalisation:
-    All returned objects are padded with $null for any column not present
-    in that specific entry, so every object in the output shares an
-    identical property set.
-Column order reflects first-seen insertion
-    order across the result set after -First or -Last slicing.
-
-Output timestamps:
-    LocalTime — entry timestamp converted to the local timezone
-    UtcTime   — entry timestamp in UTC
-
-Output behaviour:
-    By default, PSCustomObjects are emitted to the pipeline.
-When
-    -Colorize, -ExportCsv, or -OutGridView are specified, pipeline output
-    is suppressed unless -PassThru is also present.
-When -Raw is specified,
-    the unmodified JSON strings are emitted to the pipeline instead of
-    objects.
--Colorize, -ExportCsv, and -OutGridView still operate on the
-    parsed objects regardless of -Raw.
+Streaming (-Stream):
+    Entries are emitted to the pipeline as parsed, without materialising
+    the entire file.
+Filtering, flattening, and column normalisation are
+    all per-entry.
+-First / -Last / -Colorize / -ExportCsv / -OutGridView
+    require the non-stream mode and force materialisation when requested.
 
 ## EXAMPLES
 
 ### EXAMPLE 1
 
-# Return all ERROR entries as objects
-$errors = Read-DJMLog -Level ERROR
-$errors | Select-Object LocalTime, Message, Error_Message
-
-### EXAMPLE 2
-
-# Colorized console view filtered by level and time window
-Read-DJMLog -Level WARN, ERROR -Since (Get-Date).AddHours(-4) -Colorize
-
-### EXAMPLE 3
-
-# Filter by message content and export to CSV
-Read-DJMLog -MessageContains 'provisioning' -ExportCsv -CsvPath C:\Reports\provision.csv
-
-### EXAMPLE 4
-
-# Colorize to console and also capture results for further processing
-$results = Read-DJMLog -Level ERROR -Colorize -PassThru
-$results | Group-Object CorrelationId | Where-Object { $_.Count -gt 1 }
-
-### EXAMPLE 5
-
-# Retrieve all entries for a specific operation by correlation ID
-Read-DJMLog -CorrelationId $cid | Format-Table LocalTime, Level, Message
-
-### EXAMPLE 6
-
-# Show the 20 most recent entries interactively on Windows
-Read-DJMLog -Last 20 -OutGridView
-
-### EXAMPLE 7
-
-# Emit raw JSON strings for forwarding or external processing
-Read-DJMLog -Level ERROR -Raw | Set-Content -LiteralPath C:\export\errors.jsonl
+# Stream errors from a multi-GB file without loading it into memory
+Read-DJMLog -Stream -Level ERROR | Select-Object -First 100
 
 ## PARAMETERS
 
 ### -Colorize
 
 Writes a formatted summary of each matching entry to the host using
-colour-coded output: ERROR=Red, WARN=Yellow, DEBUG=DarkGray, INFO=Gray.
-Output format: yyyy-MM-dd HH:mm:ss [LVL] Message (local time).
-Suppresses pipeline output unless -PassThru is also specified.
+colour-coded output.
+Mutually exclusive with -Stream.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -144,9 +82,7 @@ HelpMessage: ''
 
 ### -CorrelationId
 
-Restricts output to entries whose CorrelationId exactly matches the
-provided string.
-Case-sensitive.
+Restricts output to entries whose CorrelationId exactly matches.
 
 ```yaml
 Type: System.String
@@ -167,10 +103,8 @@ HelpMessage: ''
 
 ### -CsvPath
 
-Destination path for the CSV export.
-Only used when -ExportCsv is
-specified.
-Defaults to log.csv in the current working directory.
+Destination for -ExportCsv.
+Defaults to log.csv in the current directory.
 
 ```yaml
 Type: System.String
@@ -191,9 +125,8 @@ HelpMessage: ''
 
 ### -ExportCsv
 
-Exports all matching results to a CSV file at -CsvPath after processing
-completes.
-Suppresses pipeline output unless -PassThru is also specified.
+Exports all matching results to a CSV file.
+Mutually exclusive with -Stream.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -214,9 +147,8 @@ HelpMessage: ''
 
 ### -First
 
-Returns only the first N entries from the filtered result set.
-Cannot be
-combined with -Last.
+Returns only the first N entries.
+Mutually exclusive with -Stream.
 
 ```yaml
 Type: System.Int32
@@ -237,9 +169,8 @@ HelpMessage: ''
 
 ### -Last
 
-Returns only the last N entries from the filtered result set.
-Cannot be
-combined with -First.
+Returns only the last N entries.
+Mutually exclusive with -Stream.
 
 ```yaml
 Type: System.Int32
@@ -261,9 +192,6 @@ HelpMessage: ''
 ### -Level
 
 Restricts output to entries matching one or more severity levels.
-Accepts an array.
-Case-insensitive.
-When omitted, all levels are returned.
 
 ```yaml
 Type: System.String[]
@@ -287,8 +215,6 @@ HelpMessage: ''
 Path to the JSONL file to read.
 When omitted, the module-level default
 configured by Set-DJMLogConfig is used.
-Falls back to log.jsonl in the current
-working directory if no default has been set.
 
 ```yaml
 Type: System.String
@@ -309,9 +235,7 @@ HelpMessage: ''
 
 ### -MessageContains
 
-Restricts output to entries whose Message field matches the given wildcard
-pattern.
-Equivalent to -like "*<value>*".
+Wildcard match against the Message field.
 
 ```yaml
 Type: System.String
@@ -332,11 +256,8 @@ HelpMessage: ''
 
 ### -OutGridView
 
-Sends all matching results to Out-GridView for interactive inspection.
-Windows only.
-A warning is emitted and the switch is ignored on non-Windows
-platforms.
-Suppresses pipeline output unless -PassThru is also specified.
+Sends results to Out-GridView (Windows only).
+Mutually exclusive with -Stream.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -357,12 +278,7 @@ HelpMessage: ''
 
 ### -PassThru
 
-When specified alongside -Colorize, -ExportCsv, or -OutGridView, also
-emits result objects to the pipeline.
-When -Raw is also set, emits JSON
-strings.
-Has no effect when none of those switches are present, as
-pipeline output is the default behaviour in that case.
+With -Colorize/-ExportCsv/-OutGridView, also emit objects to the pipeline.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -383,10 +299,7 @@ HelpMessage: ''
 
 ### -Raw
 
-Emits the unmodified JSON strings from the file instead of PSCustomObjects.
-Filtering still applies.
--Colorize, -ExportCsv, and -OutGridView continue
-to operate on the parsed objects regardless of -Raw.
+Emit unmodified JSON strings instead of objects.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -408,7 +321,6 @@ HelpMessage: ''
 ### -Since
 
 Restricts output to entries with a UTC timestamp at or after this value.
-The provided datetime is converted to UTC before comparison.
 
 ```yaml
 Type: System.DateTime
@@ -427,10 +339,31 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -Stream
+
+Emit entries to the pipeline as they are parsed, without materialisation.
+Disables -First/-Last/-Colorize/-ExportCsv/-OutGridView.
+
+```yaml
+Type: System.Management.Automation.SwitchParameter
+DefaultValue: False
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### -Until
 
 Restricts output to entries with a UTC timestamp at or before this value.
-The provided datetime is converted to UTC before comparison.
 
 ```yaml
 Type: System.DateTime

@@ -27,7 +27,9 @@ Set-DJMLogConfig [[-Path] <string>] [[-MaxSizeMB] <double>] [[-MutexTimeoutMs] <
  [[-TenantId] <string>] [[-AppId] <string>] [[-AppSecret] <psobject>]
  [[-CertificateSubject] <string>] [[-CertificateThumbprint] <string>] [[-BearerToken] <string>]
  [[-FlushThreshold] <int>] [[-MaxBufferSize] <int>] [[-MaxBufferBytes] <long>]
- [[-MaxFlushRetries] <int>] [[-ConfigPath] <string>] [<CommonParameters>]
+ [[-MaxFlushRetries] <int>] [[-ChannelCapacity] <int>] [[-Sinks] <string[]>]
+ [[-RedactionPatterns] <string[]>] [[-RedactionPresets] <string[]>] [[-SampleRate] <hashtable>]
+ [[-IncludeHostContext] <bool>] [[-ConfigPath] <string>] [<CommonParameters>]
 ```
 
 ## ALIASES
@@ -275,6 +277,32 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -ChannelCapacity
+
+Bounded capacity of the async writer channel (v2.0).
+When the channel is at
+capacity, the oldest entry is dropped (FullMode=DropOldest).
+The drop is
+surfaced via Get-DJMLogDiagnostics.DroppedCount.
+Defaults to 10000.
+
+```yaml
+Type: System.Int32
+DefaultValue: 0
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: 23
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### -CloudEnvironment
 
 Azure cloud environment for OAuth2 endpoints and token scope.
@@ -315,7 +343,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 23
+  Position: 29
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -429,6 +457,30 @@ Aliases: []
 ParameterSets:
 - Name: (All)
   Position: 7
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -IncludeHostContext
+
+When $true (the default), v2.0 entries include a Host enrichment block
+({ MachineName, ProcessId, UserName, PSVersion }).
+Set to $false to
+suppress globally.
+
+```yaml
+Type: System.Boolean
+DefaultValue: False
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: 28
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -633,6 +685,52 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -RedactionPatterns
+
+Array of regex patterns.
+Each match in any string metadata value is replaced
+with '[REDACTED]'.
+Always-on rules (SecureString, PSCredential, sensitive
+key names) apply regardless.
+
+```yaml
+Type: System.String[]
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: 25
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -RedactionPresets
+
+Array of built-in redaction presets: 'Email', 'BearerToken', 'CreditCard'.
+
+```yaml
+Type: System.String[]
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: 26
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### -RetainDays
 
 After rotating, delete rotated files whose UTC creation time is older than
@@ -697,6 +795,54 @@ Aliases: []
 ParameterSets:
 - Name: (All)
   Position: 4
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -SampleRate
+
+Hashtable @{ <Level> = <0..1 rate> } applied after MinLevel filtering.
+A
+rate of 0.0 drops all entries at that level; 1.0 keeps all (the default
+when omitted).
+
+```yaml
+Type: System.Collections.Hashtable
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: 27
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -Sinks
+
+Array of enabled sinks.
+Any combination of 'File', 'Console', 'EventLog',
+'LogAnalytics'.
+Defaults to @('File').
+
+```yaml
+Type: System.String[]
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: 24
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false

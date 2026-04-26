@@ -52,20 +52,58 @@ function Get-DJMLogDiagnostics {
         Justification = 'Returns aggregate diagnostics; plural noun matches the contract.')]
     param ()
 
-    $state = 'Closed'
-    if ($script:AutoFlushDisabled) {
-        if ($script:AutoFlushOpenedAtUtc -and
-            ([datetime]::UtcNow - $script:AutoFlushOpenedAtUtc).TotalSeconds -ge $script:HalfOpenAfterSeconds) {
+    # Compute breaker state as the union of main + writer state. Either side may
+    # have flipped the breaker (main-runspace tests / Set-DJMLogConfig vs the
+    # writer's LA flush path). Open wins over Closed; HalfOpen is the
+    # "Open + window elapsed" derived state.
+    $mainOpen    = [bool]$script:AutoFlushDisabled
+    $mainOpenedAt = $script:AutoFlushOpenedAtUtc
+
+    $writerOpen   = $false
+    $writerOpenedAt = $null
+    $enqueued    = 0L
+    $processed   = 0L
+    $dropped     = 0L
+    $writerErrors = @()
+    if ($script:WriterShared) {
+        $writerOpen     = [bool]$script:WriterShared.AutoFlushDisabled
+        $writerOpenedAt = $script:WriterShared.AutoFlushOpenedAtUtc
+        $enqueued       = [int64]$script:WriterShared.EnqueuedCount
+        $processed      = [int64]$script:WriterShared.ProcessedCount
+        $dropped        = [int64]$script:WriterShared.DroppedCount
+        $writerErrors   = @($script:WriterShared.Errors.ToArray())
+    }
+
+    $isOpen     = $mainOpen -or $writerOpen
+    # Earliest non-null OpenedAt
+    $autoOpened = if ($mainOpenedAt -and $writerOpenedAt) {
+        if ($mainOpenedAt -lt $writerOpenedAt) { $mainOpenedAt } else { $writerOpenedAt }
+    } elseif ($mainOpenedAt)   { $mainOpenedAt }
+    elseif ($writerOpenedAt)   { $writerOpenedAt }
+    else                       { $null }
+
+    if ($isOpen) {
+        if ($autoOpened -and ([datetime]::UtcNow - $autoOpened).TotalSeconds -ge $script:HalfOpenAfterSeconds) {
             $state = 'HalfOpen-Probe-Pending'
         }
         else {
             $state = 'Open'
         }
     }
+    else {
+        $state = 'Closed'
+    }
+
+    # Merge main + writer error queues; main first, writer second
+    $allErrors = @($script:InternalErrors.ToArray()) + $writerErrors
 
     [pscustomobject]@{
-        Errors               = $script:InternalErrors.ToArray()
+        Errors               = $allErrors
         CircuitBreakerState  = $state
-        AutoFlushOpenedAtUtc = $script:AutoFlushOpenedAtUtc
+        AutoFlushOpenedAtUtc = $autoOpened
+        EnqueuedCount        = $enqueued
+        ProcessedCount       = $processed
+        DroppedCount         = $dropped
+        QueuedCount          = [Math]::Max(0L, $enqueued - $processed)
     }
 }
