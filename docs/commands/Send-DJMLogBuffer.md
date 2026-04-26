@@ -48,6 +48,12 @@ The function breaks on the
 first batch failure so partially sent entries are removed while unsent entries
 remain buffered for the next attempt.
 
+Buffer access is serialised through an in-process SemaphoreSlim
+($script:BufferLock) so concurrent Write-DJMLog and Send-DJMLogBuffer calls in
+the same process cannot corrupt the underlying List.
+Cross-process file writes
+are still serialised by the named OS mutex.
+
 ## EXAMPLES
 
 ### EXAMPLE 1
@@ -95,6 +101,10 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 ## INPUTS
 
 ## OUTPUTS
+
+### System.Void
+
+
 
 ## NOTES
 

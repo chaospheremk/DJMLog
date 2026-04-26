@@ -11,10 +11,10 @@ function Write-DJMLog {
     collision risk when multiple runspaces write to the same file.
 
     Each log entry always contains:
-        UtcTimestamp  — ISO 8601 UTC timestamp of the write
-        Level         — Severity level, uppercased
-        Message       — The provided message string
-        CorrelationId — GUID string linking related entries
+        UtcTimestamp  - ISO 8601 UTC timestamp of the write
+        Level         - Severity level, uppercased
+        Message       - The provided message string
+        CorrelationId - GUID string linking related entries
 
     Minimum level filtering:
         When a module-level MinLevel has been configured via Set-DJMLogConfig
@@ -35,43 +35,62 @@ function Write-DJMLog {
 
     When -ErrorObject is provided alongside -Level ERROR, error context is
     captured under Metadata.Error with the following fields:
-        ScriptName      — Path of the script where the error originated
-        LineNumber      — Line number within that script
-        Command         — Name of the command that threw
-        PositionMessage — First line of the invocation position message
-        Type            — Full exception type name
-        Message         — Exception message text
+        ScriptName      - Path of the script where the error originated
+        LineNumber      - Line number within that script
+        Command         - Name of the command that threw
+        PositionMessage - First line of the invocation position message
+        Type            - Full exception type name (top-level)
+        Message         - Exception message text (top-level)
+        ExceptionChain  - Array of { Type, Message } for every exception in
+                          the InnerException / AggregateException.InnerExceptions
+                          chain, outermost first.
 
     Log rotation:
         Size-based: when -MaxSizeMB is greater than zero (or a module-level
         maximum has been configured via Set-DJMLogConfig), Write-DJMLog checks
-        the current file size at the start of each call. If the file meets or
-        exceeds the threshold, it is rotated.
+        the current file size after acquiring the write mutex. If the file
+        meets or exceeds the threshold, it is rotated.
 
         Time-based: when -RotationSchedule is Daily or Hourly (or configured
         via Set-DJMLogConfig), the file's UTC creation time is compared to the
         current period. If the file was created in a prior day or hour, it is
         rotated before writing.
 
+        Rotation runs *inside* the named mutex so two runspaces racing across
+        the threshold cannot both perform the rename. The losing runspace
+        sees the freshly created (small) file on its post-acquisition recheck
+        and proceeds to the append step without rotating.
+
         The rotated file name uses the pattern:
         <basename>_yyyyMMdd-HHmmss<extension>
 
     Retention cleanup (runs only after a rotation):
-        -RetainDays N  — deletes rotated files older than N days.
-        -RetainFiles N — keeps only the N most recent rotated files.
+        -RetainDays N  - deletes rotated files older than N days.
+        -RetainFiles N - keeps only the N most recent rotated files.
         Both can be used together; RetainDays runs first.
         Set either to 0 (the default) to keep all rotated files.
 
+        A failure to delete any individual rotated file (locked, ACL,
+        unreadable creation time) is recorded in the SelfLog queue
+        (Get-DJMLogDiagnostics) and the cleanup loop continues with the
+        remaining files instead of aborting.
+
     A non-terminating warning is emitted if the file cannot be written, if the
     mutex timeout expires before the write lock can be acquired, or if
-    -ErrorObject is supplied without -Level ERROR.
+    -ErrorObject is supplied without -Level ERROR. Internal failures are also
+    enqueued to the SelfLog (Get-DJMLogDiagnostics) so callers can detect
+    silent drops without parsing warning streams.
 
     Parallel safety:
         All writes are serialised through a named system mutex
         ('DJMLog_WriteAccess'). The mutex is a kernel object, so it coordinates
         correctly across PowerShell runspaces that do not share memory. Each
-        call acquires the mutex, performs the AppendAllText, and immediately
-        releases it, keeping the lock window as short as possible.
+        call acquires the mutex, performs the rotation check + rename if
+        needed, performs the AppendAllText, and releases the mutex.
+
+        The Log Analytics buffer (when LogAnalyticsEnabled) is guarded by an
+        in-process SemaphoreSlim so concurrent writes within the same process
+        cannot corrupt the underlying List.
 
     .PARAMETER Message
     The human-readable log message. Mandatory in both parameter sets.
@@ -190,10 +209,11 @@ function Write-DJMLog {
     Write-DJMLog -Message 'Entry after rotation check'
 
     .EXAMPLE
-    # Per-call level override — suppress this entry when module threshold is lower
+    # Per-call level override - suppress this entry when module threshold is lower
     Write-DJMLog -Message 'Verbose diagnostic' -Level DEBUG -MinLevel DEBUG
     #>
     [CmdletBinding()]
+    [OutputType([pscustomobject])]
     param (
         [Parameter(Mandatory, ParameterSetName = 'Default')]
         [Parameter(Mandatory, ParameterSetName = 'Error')]
@@ -289,72 +309,13 @@ function Write-DJMLog {
             }
             catch {
                 Write-Warning "Write-DJMLog: failed to create log directory '$logDirectory': $_"
+                Add-DJMInternalError -Source 'Write-DJMLog' -Message "Failed to create log directory '$logDirectory'" -Exception $_.Exception
+                Write-DJMFallback -Message "Write-DJMLog: failed to create log directory '$logDirectory': $($_.Exception.Message)"
                 return
             }
         }
 
         $resolvedLogPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($LogPath)
-
-        # Rotation check — size-based and time-based combined
-        $shouldRotate = $false
-        if (Test-Path -LiteralPath $LogPath) {
-            $fileInfo = [System.IO.FileInfo]::new($resolvedLogPath)
-
-            if ($effectiveMaxSizeMB -gt 0 -and ($fileInfo.Length / 1MB) -ge $effectiveMaxSizeMB) {
-                $shouldRotate = $true
-            }
-
-            if (-not $shouldRotate -and $effectiveRotationSchedule -ne 'None') {
-                if ($effectiveRotationSchedule -eq 'Daily') {
-                    $shouldRotate = $fileInfo.CreationTimeUtc.Date -lt [datetime]::UtcNow.Date
-                }
-                elseif ($effectiveRotationSchedule -eq 'Hourly') {
-                    $hourStart = [datetime]::UtcNow.Date.AddHours([datetime]::UtcNow.Hour)
-                    $shouldRotate = $fileInfo.CreationTimeUtc -lt $hourStart
-                }
-            }
-        }
-
-        if ($shouldRotate) {
-            $timestamp   = [datetime]::UtcNow.ToString('yyyyMMdd-HHmmss')
-            $baseName    = [System.IO.Path]::GetFileNameWithoutExtension($resolvedLogPath)
-            $extension   = [System.IO.Path]::GetExtension($resolvedLogPath)
-            $directory   = [System.IO.Path]::GetDirectoryName($resolvedLogPath)
-            $rotatedPath = [System.IO.Path]::Combine($directory, "${baseName}_${timestamp}${extension}")
-            try {
-                [System.IO.File]::Move($resolvedLogPath, $rotatedPath)
-                Write-Verbose "Write-DJMLog: rotated log to '$rotatedPath'"
-            }
-            catch {
-                Write-Warning "Write-DJMLog: failed to rotate log file: $_"
-            }
-
-            # Retention cleanup — runs only after a successful rotation
-            if ($effectiveRetainDays -gt 0 -or $effectiveRetainFiles -gt 0) {
-                $cleanupPattern = "${baseName}_????????-??????${extension}"
-                $rotatedFiles   = [System.IO.Directory]::GetFiles($directory, $cleanupPattern)
-
-                if ($effectiveRetainDays -gt 0) {
-                    $cutoff = [datetime]::UtcNow.AddDays(-$effectiveRetainDays)
-                    foreach ($file in $rotatedFiles) {
-                        if ([System.IO.File]::GetCreationTimeUtc($file) -lt $cutoff) {
-                            try   { [System.IO.File]::Delete($file) }
-                            catch { Write-Warning "Write-DJMLog: failed to delete old log '$file': $_" }
-                        }
-                    }
-                    $rotatedFiles = [System.IO.Directory]::GetFiles($directory, $cleanupPattern)
-                }
-
-                if ($effectiveRetainFiles -gt 0 -and $rotatedFiles.Count -gt $effectiveRetainFiles) {
-                    [System.Array]::Sort($rotatedFiles)  # ascending alphabetical = oldest first
-                    $deleteCount = $rotatedFiles.Count - $effectiveRetainFiles
-                    foreach ($file in $rotatedFiles[0..($deleteCount - 1)]) {
-                        try   { [System.IO.File]::Delete($file) }
-                        catch { Write-Warning "Write-DJMLog: failed to delete old log '$file': $_" }
-                    }
-                }
-            }
-        }
     }
 
     process {
@@ -436,6 +397,50 @@ function Write-DJMLog {
             $errorEntry['Type']            = $errorType
             $errorEntry['Message']         = $errorMessage
 
+            # Build the inner-exception chain. The outer exception is already
+            # captured in Error.Type / Error.Message; ExceptionChain extends below
+            # to capture InnerException recursion and AggregateException fan-out
+            # so multi-task errors don't lose information.
+            $chain = [System.Collections.Generic.List[object]]::new()
+            $visitedExceptions = [System.Collections.Generic.HashSet[object]]::new(
+                [System.Collections.Generic.ReferenceEqualityComparer]::Instance
+            )
+            $queue = [System.Collections.Generic.Queue[object]]::new()
+            if ($ErrorObject.Exception) {
+                # Mark the outer as visited but do not add it to the chain.
+                [void]$visitedExceptions.Add($ErrorObject.Exception)
+                if ($ErrorObject.Exception -is [System.AggregateException]) {
+                    foreach ($inner in $ErrorObject.Exception.InnerExceptions) {
+                        if ($inner) { $queue.Enqueue($inner) }
+                    }
+                }
+                elseif ($ErrorObject.Exception.InnerException) {
+                    $queue.Enqueue($ErrorObject.Exception.InnerException)
+                }
+            }
+
+            while ($queue.Count -gt 0) {
+                $current = $queue.Dequeue()
+                if (-not $current -or -not $visitedExceptions.Add($current)) { continue }
+
+                $entryDict = [System.Collections.Generic.Dictionary[string, PSObject]]::new()
+                $entryDict['Type']    = $current.GetType().FullName
+                $entryDict['Message'] = $current.Message
+                $chain.Add($entryDict)
+
+                if ($current -is [System.AggregateException]) {
+                    foreach ($inner in $current.InnerExceptions) {
+                        if ($inner) { $queue.Enqueue($inner) }
+                    }
+                }
+                elseif ($current.InnerException) {
+                    $queue.Enqueue($current.InnerException)
+                }
+            }
+            if ($chain.Count -gt 0) {
+                $errorEntry['ExceptionChain'] = $chain.ToArray()
+            }
+
             $metadataEntry['Error'] = $errorEntry
         }
 
@@ -465,6 +470,7 @@ function Write-DJMLog {
         $logEntryJson  = $logEntry | ConvertTo-Json -Compress -Depth $Depth
         $logEntryLine  = $logEntryJson + [System.Environment]::NewLine
         $mutexAcquired = $false
+        $rotated       = $false
 
         try {
             try {
@@ -477,22 +483,137 @@ function Write-DJMLog {
                 $mutexAcquired = $true
             }
 
-            if ($mutexAcquired) {
+            if (-not $mutexAcquired) {
+                Write-Warning "Write-DJMLog: mutex timeout after ${effectiveMutexTimeoutMs}ms — log entry discarded. Message: '$Message'"
+                Add-DJMInternalError -Source 'Write-DJMLog' -Message "Mutex timeout after ${effectiveMutexTimeoutMs}ms; entry dropped"
+                return
+            }
+
+            # Rotation check + rename happen *inside* the mutex so two runspaces
+            # that both saw the file over-threshold don't both rename. The losing
+            # runspace re-evaluates against the now-fresh file and skips rotation.
+            $shouldRotate = $false
+            if (Test-Path -LiteralPath $resolvedLogPath) {
+                try {
+                    $fileInfo = [System.IO.FileInfo]::new($resolvedLogPath)
+                    $fileInfo.Refresh()
+
+                    if ($effectiveMaxSizeMB -gt 0 -and ($fileInfo.Length / 1MB) -ge $effectiveMaxSizeMB) {
+                        $shouldRotate = $true
+                    }
+
+                    if (-not $shouldRotate -and $effectiveRotationSchedule -ne 'None') {
+                        if ($effectiveRotationSchedule -eq 'Daily') {
+                            $shouldRotate = $fileInfo.CreationTimeUtc.Date -lt [datetime]::UtcNow.Date
+                        }
+                        elseif ($effectiveRotationSchedule -eq 'Hourly') {
+                            $hourStart = [datetime]::UtcNow.Date.AddHours([datetime]::UtcNow.Hour)
+                            $shouldRotate = $fileInfo.CreationTimeUtc -lt $hourStart
+                        }
+                    }
+                }
+                catch {
+                    # Could not stat the file — skip rotation rather than crash the write.
+                    Add-DJMInternalError -Source 'Write-DJMLog' -Message "Could not inspect log file for rotation: $($_.Exception.Message)" -Exception $_.Exception
+                    $shouldRotate = $false
+                }
+            }
+
+            if ($shouldRotate) {
+                $timestamp   = [datetime]::UtcNow.ToString('yyyyMMdd-HHmmss')
+                $baseName    = [System.IO.Path]::GetFileNameWithoutExtension($resolvedLogPath)
+                $extension   = [System.IO.Path]::GetExtension($resolvedLogPath)
+                $directory   = [System.IO.Path]::GetDirectoryName($resolvedLogPath)
+                $rotatedPath = [System.IO.Path]::Combine($directory, "${baseName}_${timestamp}${extension}")
+                try {
+                    [System.IO.File]::Move($resolvedLogPath, $rotatedPath)
+                    Write-Verbose "Write-DJMLog: rotated log to '$rotatedPath'"
+                    $rotated = $true
+                }
+                catch {
+                    Write-Warning "Write-DJMLog: failed to rotate log file: $_"
+                    Add-DJMInternalError -Source 'Write-DJMLog' -Message "Failed to rotate log file: $($_.Exception.Message)" -Exception $_.Exception
+                }
+            }
+
+            # Retention cleanup — runs only after a successful rotation.
+            # All deletion attempts are individually wrapped in try/catch so a
+            # single locked file cannot abort the loop and leak rotated files.
+            if ($rotated -and ($effectiveRetainDays -gt 0 -or $effectiveRetainFiles -gt 0)) {
+                $cleanupPattern = "${baseName}_????????-??????${extension}"
+                try {
+                    $rotatedFiles = @([System.IO.Directory]::GetFiles($directory, $cleanupPattern))
+                }
+                catch {
+                    Add-DJMInternalError -Source 'Write-DJMLog' -Message "Failed to enumerate rotated files for retention: $($_.Exception.Message)" -Exception $_.Exception
+                    $rotatedFiles = @()
+                }
+
+                if ($effectiveRetainDays -gt 0 -and $rotatedFiles.Count -gt 0) {
+                    $cutoff = [datetime]::UtcNow.AddDays(-$effectiveRetainDays)
+                    foreach ($file in $rotatedFiles) {
+                        try {
+                            $fi = [System.IO.FileInfo]::new($file)
+                            $fi.Refresh()
+                            if ($fi.CreationTimeUtc -lt $cutoff) {
+                                [System.IO.File]::Delete($file)
+                            }
+                        }
+                        catch {
+                            Write-Warning "Write-DJMLog: failed to delete old log '$file': $_"
+                            Add-DJMInternalError -Source 'Write-DJMLog' -Message "Failed to delete old log '$file' during RetainDays cleanup: $($_.Exception.Message)" -Exception $_.Exception
+                        }
+                    }
+                    try {
+                        $rotatedFiles = @([System.IO.Directory]::GetFiles($directory, $cleanupPattern))
+                    }
+                    catch {
+                        Add-DJMInternalError -Source 'Write-DJMLog' -Message "Failed to re-enumerate rotated files: $($_.Exception.Message)" -Exception $_.Exception
+                        $rotatedFiles = @()
+                    }
+                }
+
+                if ($effectiveRetainFiles -gt 0 -and $rotatedFiles.Count -gt $effectiveRetainFiles) {
+                    [System.Array]::Sort($rotatedFiles)  # ascending alphabetical = oldest first
+                    $deleteCount = $rotatedFiles.Count - $effectiveRetainFiles
+                    if ($deleteCount -gt 0) {
+                        foreach ($file in $rotatedFiles[0..($deleteCount - 1)]) {
+                            try {
+                                [System.IO.File]::Delete($file)
+                            }
+                            catch {
+                                Write-Warning "Write-DJMLog: failed to delete old log '$file': $_"
+                                Add-DJMInternalError -Source 'Write-DJMLog' -Message "Failed to delete old log '$file' during RetainFiles cleanup: $($_.Exception.Message)" -Exception $_.Exception
+                            }
+                        }
+                    }
+                }
+            }
+
+            # Append the entry. Failures are logged to the SelfLog and EventLog/stderr.
+            try {
                 [System.IO.File]::AppendAllText($resolvedLogPath, $logEntryLine, [System.Text.Encoding]::UTF8)
             }
-            else {
-                Write-Warning "Write-DJMLog: mutex timeout after ${effectiveMutexTimeoutMs}ms — log entry discarded. Message: '$Message'"
+            catch {
+                Write-Warning "Write-DJMLog: failed to write log entry to '$LogPath': $_"
+                Add-DJMInternalError -Source 'Write-DJMLog' -Message "Failed to write log entry to '$LogPath': $($_.Exception.Message)" -Exception $_.Exception
+                Write-DJMFallback -Message "Write-DJMLog: failed to write log entry to '$LogPath': $($_.Exception.Message)"
+                # Re-raise so the outer catch leaves $writeSucceeded=$false implicitly
+                throw
             }
+            $writeSucceeded = $true
         }
         catch {
-            Write-Warning "Write-DJMLog: failed to write log entry to '$LogPath': $_"
+            $writeSucceeded = $false
         }
         finally {
             if ($mutexAcquired) { $script:LogMutex.ReleaseMutex() }
         }
 
-        # Buffer for Log Analytics (only after successful file write)
-        if ($mutexAcquired -and $script:LogAnalyticsEnabled) {
+        # Buffer for Log Analytics (only after successful file write).
+        # Buffer mutations are guarded by an in-process semaphore so concurrent
+        # writes within the same process cannot corrupt the underlying List.
+        if ($writeSucceeded -and $script:LogAnalyticsEnabled) {
             $bufferEntry = @{
                 UtcTimestamp  = $logEntry['UtcTimestamp']
                 Level         = $logEntry['Level']
@@ -503,21 +624,33 @@ function Write-DJMLog {
                 $bufferEntry['Metadata'] = $logEntry['Metadata']
             }
 
-            # Drop oldest if at capacity
-            if ($script:LogBuffer.Count -ge $script:MaxBufferSize) {
-                $script:LogBuffer.RemoveAt(0)
-                Write-Warning "Write-DJMLog: buffer full ($($script:MaxBufferSize)). Oldest entry dropped."
+            $shouldFlush = $false
+            $script:BufferLock.Wait()
+            try {
+                if ($script:LogBuffer.Count -ge $script:MaxBufferSize) {
+                    $script:LogBuffer.RemoveAt(0)
+                    Write-Warning "Write-DJMLog: buffer full ($($script:MaxBufferSize)). Oldest entry dropped."
+                    Add-DJMInternalError -Source 'Write-DJMLog' -Message "Log Analytics buffer full ($($script:MaxBufferSize)); oldest entry dropped"
+                }
+
+                $script:LogBuffer.Add($bufferEntry)
+
+                if ($script:LogBuffer.Count -ge $script:FlushThreshold -and -not $script:AutoFlushDisabled) {
+                    $shouldFlush = $true
+                }
+            }
+            finally {
+                [void]$script:BufferLock.Release()
             }
 
-            $script:LogBuffer.Add($bufferEntry)
-
-            # Auto-flush when threshold reached
-            if ($script:LogBuffer.Count -ge $script:FlushThreshold -and -not $script:AutoFlushDisabled) {
+            # Send-DJMLogBuffer takes the semaphore itself for its snapshot — call it
+            # *outside* the lock to avoid blocking other writers during the HTTP POST.
+            if ($shouldFlush) {
                 Send-DJMLogBuffer
             }
         }
 
-        if ($PassThru) {
+        if ($PassThru -and $writeSucceeded) {
             ConvertTo-DJMOrderedPSObject -Dictionary $logEntry
         }
     }

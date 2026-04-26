@@ -69,14 +69,13 @@ Before ending a code session:
 
 ## Rules
 
-- Read ../../../_meta/security.md before writing any code
-- Read ../../../_meta/powershell-housestyle.md before writing any PowerShell
-- Read ../../../_meta/graph-api-skills.md before writing any Graph API code
 - No real IDs, hostnames, credentials, or org-identifying content — ever
 - All parameters use placeholders: `<tenant-id>` `<subscription-id>` etc.
 - Never modify files outside this code/ folder except the four memory files
   (../bugs.md, ../decisions.md, ../key-facts.md, ../issues.md)
-- Never make claims about code or APIs before investigating. Cite source file and line for every claim. It is acceptable and preferred to say you are uncertain.
+- The `powershell-standards` and `graph-api-powershell` skills trigger
+  automatically when writing relevant code — no manual reads needed
+- Read `../../../_meta/security.md` for full sanitization rules when needed
 
 ## GitHub
 

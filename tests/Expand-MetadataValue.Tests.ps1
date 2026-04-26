@@ -123,4 +123,46 @@ Describe 'Expand-MetadataValue' {
             }
         }
     }
+
+    Context 'Cycle detection (C2)' {
+
+        It 'terminates and stores a cycle marker for a self-referencing object' {
+            InModuleScope DJMLog {
+                $target = [System.Collections.Generic.Dictionary[string, PSObject]]::new()
+                $o = [PSCustomObject]@{ Name = 'a' }
+                $o | Add-Member -MemberType NoteProperty -Name Self -Value $o
+
+                # Must not hang or stack-overflow — the test runner timeout proves termination
+                Expand-MetadataValue -Prefix 'Root' -Value $o -Target $target
+
+                # Sibling property must still be expanded normally
+                $target['Root_Name'] | Should -Be 'a'
+
+                # The cycle must be marked rather than recursed into
+                $target['Root_Self'] | Should -Be '<cycle>'
+            }
+        }
+
+        It 'terminates and expands siblings while marking the cycle for mutual recursion' {
+            InModuleScope DJMLog {
+                $target = [System.Collections.Generic.Dictionary[string, PSObject]]::new()
+                $a = [PSCustomObject]@{ Label = 'nodeA' }
+                $b = [PSCustomObject]@{ Label = 'nodeB' }
+                $a | Add-Member -MemberType NoteProperty -Name Other -Value $b
+                $b | Add-Member -MemberType NoteProperty -Name Other -Value $a
+
+                # Must not hang or stack-overflow
+                Expand-MetadataValue -Prefix 'Root' -Value $a -Target $target
+
+                # Sibling Label properties must both expand correctly. This proves the
+                # visited-set Remove() in finally restored state for siblings rather
+                # than leaving them poisoned as already-visited.
+                $target['Root_Label']        | Should -Be 'nodeA'
+                $target['Root_Other_Label']  | Should -Be 'nodeB'
+
+                # The cycle (a -> b -> a) must be marked rather than recursed into.
+                $target['Root_Other_Other'] | Should -Be '<cycle>'
+            }
+        }
+    }
 }

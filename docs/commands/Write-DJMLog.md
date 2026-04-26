@@ -51,10 +51,10 @@ Writes use
 collision risk when multiple runspaces write to the same file.
 
 Each log entry always contains:
-    UtcTimestamp  — ISO 8601 UTC timestamp of the write
-    Level         — Severity level, uppercased
-    Message       — The provided message string
-    CorrelationId — GUID string linking related entries
+    UtcTimestamp  - ISO 8601 UTC timestamp of the write
+    Level         - Severity level, uppercased
+    Message       - The provided message string
+    CorrelationId - GUID string linking related entries
 
 Minimum level filtering:
     When a module-level MinLevel has been configured via Set-DJMLogConfig
@@ -78,19 +78,22 @@ Use -NoCaller to suppress this for a single
 
 When -ErrorObject is provided alongside -Level ERROR, error context is
 captured under Metadata.Error with the following fields:
-    ScriptName      — Path of the script where the error originated
-    LineNumber      — Line number within that script
-    Command         — Name of the command that threw
-    PositionMessage — First line of the invocation position message
-    Type            — Full exception type name
-    Message         — Exception message text
+    ScriptName      - Path of the script where the error originated
+    LineNumber      - Line number within that script
+    Command         - Name of the command that threw
+    PositionMessage - First line of the invocation position message
+    Type            - Full exception type name (top-level)
+    Message         - Exception message text (top-level)
+    ExceptionChain  - Array of { Type, Message } for every exception in
+                      the InnerException / AggregateException.InnerExceptions
+                      chain, outermost first.
 
 Log rotation:
     Size-based: when -MaxSizeMB is greater than zero (or a module-level
     maximum has been configured via Set-DJMLogConfig), Write-DJMLog checks
-    the current file size at the start of each call.
-If the file meets or
-    exceeds the threshold, it is rotated.
+    the current file size after acquiring the write mutex.
+If the file
+    meets or exceeds the threshold, it is rotated.
 
     Time-based: when -RotationSchedule is Daily or Hourly (or configured
     via Set-DJMLogConfig), the file's UTC creation time is compared to the
@@ -98,18 +101,32 @@ If the file meets or
 If the file was created in a prior day or hour, it is
     rotated before writing.
 
+    Rotation runs *inside* the named mutex so two runspaces racing across
+    the threshold cannot both perform the rename.
+The losing runspace
+    sees the freshly created (small) file on its post-acquisition recheck
+    and proceeds to the append step without rotating.
+
     The rotated file name uses the pattern:
     <basename>_yyyyMMdd-HHmmss<extension>
 
 Retention cleanup (runs only after a rotation):
-    -RetainDays N  — deletes rotated files older than N days.
-    -RetainFiles N — keeps only the N most recent rotated files.
+    -RetainDays N  - deletes rotated files older than N days.
+    -RetainFiles N - keeps only the N most recent rotated files.
     Both can be used together; RetainDays runs first.
     Set either to 0 (the default) to keep all rotated files.
+
+    A failure to delete any individual rotated file (locked, ACL,
+    unreadable creation time) is recorded in the SelfLog queue
+    (Get-DJMLogDiagnostics) and the cleanup loop continues with the
+    remaining files instead of aborting.
 
 A non-terminating warning is emitted if the file cannot be written, if the
 mutex timeout expires before the write lock can be acquired, or if
 -ErrorObject is supplied without -Level ERROR.
+Internal failures are also
+enqueued to the SelfLog (Get-DJMLogDiagnostics) so callers can detect
+silent drops without parsing warning streams.
 
 Parallel safety:
     All writes are serialised through a named system mutex
@@ -117,8 +134,12 @@ Parallel safety:
 The mutex is a kernel object, so it coordinates
     correctly across PowerShell runspaces that do not share memory.
 Each
-    call acquires the mutex, performs the AppendAllText, and immediately
-    releases it, keeping the lock window as short as possible.
+    call acquires the mutex, performs the rotation check + rename if
+    needed, performs the AppendAllText, and releases the mutex.
+
+    The Log Analytics buffer (when LogAnalyticsEnabled) is guarded by an
+    in-process SemaphoreSlim so concurrent writes within the same process
+    cannot corrupt the underlying List.
 
 ## EXAMPLES
 
@@ -163,7 +184,7 @@ Write-DJMLog -Message 'Entry after rotation check'
 
 ### EXAMPLE 6
 
-# Per-call level override — suppress this entry when module threshold is lower
+# Per-call level override - suppress this entry when module threshold is lower
 Write-DJMLog -Message 'Verbose diagnostic' -Level DEBUG -MinLevel DEBUG
 
 ## PARAMETERS
@@ -669,6 +690,10 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 ## OUTPUTS
 
 ### None by default. PSCustomObject when -PassThru is specified.
+
+
+
+### System.Management.Automation.PSObject
 
 
 
