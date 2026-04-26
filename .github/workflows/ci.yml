@@ -96,6 +96,11 @@ jobs:
           if ! command -v git >/dev/null 2>&1; then
               apt-get update && apt-get install -y --no-install-recommends git ca-certificates
           fi
+          # actions/checkout writes files under one UID; subsequent steps may
+          # invoke git as root via the docker exec layer. Mark the workspace
+          # safe so dorny/test-reporter's `git ls-files` doesn't trip git's
+          # dubious-ownership protection.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
