@@ -33,6 +33,11 @@ function Write-DJMLog {
         call, or Set-DJMLogConfig -IncludeCaller $false to disable globally.
         A user-supplied Metadata.Caller value is never overwritten.
 
+        Setting the environment variable $env:DJMLOG_CALLER_OFF to any
+        non-empty value (including 'false' or '0') is an emergency escape
+        hatch that suppresses the Get-PSCallStack call entirely for hot paths.
+        Use it only when caller capture is a measured bottleneck.
+
     When -ErrorObject is provided alongside -Level ERROR, error context is
     captured under Metadata.Error with the following fields:
         ScriptName      - Path of the script where the error originated
@@ -444,8 +449,11 @@ function Write-DJMLog {
             $metadataEntry['Error'] = $errorEntry
         }
 
-        # Caller auto-capture
-        if ($effectiveIncludeCaller) {
+        # Caller auto-capture. Get-PSCallStack is the hot-path cost on every write
+        # (proper fix: async writer in v2.0). For now: skip entirely when the
+        # opt-out env var DJMLOG_CALLER_OFF is set, and only walk the stack when
+        # IncludeCaller is on for this entry.
+        if ($effectiveIncludeCaller -and -not $env:DJMLOG_CALLER_OFF) {
             $callStack = Get-PSCallStack
             if ($callStack.Count -gt $CallerDepth) {
                 $callerFrame = $callStack[$CallerDepth]
@@ -468,7 +476,11 @@ function Write-DJMLog {
         }
 
         $logEntryJson  = $logEntry | ConvertTo-Json -Compress -Depth $Depth
-        $logEntryLine  = $logEntryJson + [System.Environment]::NewLine
+        # Always use LF (0x0A) so JSONL files written on Windows match files
+        # written on Linux/macOS — Read-DJMLog and downstream tools expect a
+        # single trailing newline byte per record. [Environment]::NewLine
+        # would emit CRLF on Windows and break that contract.
+        $logEntryLine  = $logEntryJson + "`n"
         $mutexAcquired = $false
         $rotated       = $false
 
@@ -625,15 +637,46 @@ function Write-DJMLog {
             }
 
             $shouldFlush = $false
+            # Pre-compute the byte size of this entry for the bytes-cap check.
+            $entryBytes = 0
+            try {
+                $entryJson  = $bufferEntry | ConvertTo-Json -Compress -Depth $Depth
+                $entryBytes = [System.Text.Encoding]::UTF8.GetByteCount($entryJson)
+            }
+            catch {
+                Add-DJMInternalError -Source 'Write-DJMLog' -Message "Failed to compute byte size for buffer entry: $($_.Exception.Message)" -Exception $_.Exception
+            }
+
             $script:BufferLock.Wait()
             try {
+                # Count cap: drop head when at MaxBufferSize. Decrement the
+                # running byte total by the evicted entry's size so the bytes
+                # cap stays accurate without an O(N) recompute.
                 if ($script:LogBuffer.Count -ge $script:MaxBufferSize) {
+                    $evicted = $script:LogBuffer[0]
                     $script:LogBuffer.RemoveAt(0)
+                    $script:BufferByteTotal = [math]::Max(0, $script:BufferByteTotal - (Get-DJMEntryByteCount -Entry $evicted -Depth $Depth))
                     Write-Warning "Write-DJMLog: buffer full ($($script:MaxBufferSize)). Oldest entry dropped."
                     Add-DJMInternalError -Source 'Write-DJMLog' -Message "Log Analytics buffer full ($($script:MaxBufferSize)); oldest entry dropped"
                 }
 
+                # Bytes cap: drop head while adding this entry would exceed
+                # MaxBufferBytes. Skip when MaxBufferBytes <= 0 (cap disabled).
+                # $script:BufferByteTotal is maintained incrementally so this
+                # check is O(eviction count), not O(buffer size).
+                if ($script:MaxBufferBytes -gt 0 -and $entryBytes -gt 0) {
+                    while ($script:LogBuffer.Count -gt 0 -and
+                           ($script:BufferByteTotal + $entryBytes) -gt $script:MaxBufferBytes) {
+                        $evicted = $script:LogBuffer[0]
+                        $script:LogBuffer.RemoveAt(0)
+                        $script:BufferByteTotal = [math]::Max(0, $script:BufferByteTotal - (Get-DJMEntryByteCount -Entry $evicted -Depth $Depth))
+                        Write-Warning "Write-DJMLog: buffer full (bytes); oldest entry dropped."
+                        Add-DJMInternalError -Source 'Write-DJMLog' -Message "Log Analytics buffer full (bytes); oldest entry dropped (MaxBufferBytes=$($script:MaxBufferBytes))"
+                    }
+                }
+
                 $script:LogBuffer.Add($bufferEntry)
+                $script:BufferByteTotal += $entryBytes
 
                 if ($script:LogBuffer.Count -ge $script:FlushThreshold -and -not $script:AutoFlushDisabled) {
                     $shouldFlush = $true

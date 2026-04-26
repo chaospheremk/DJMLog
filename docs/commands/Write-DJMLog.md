@@ -76,6 +76,11 @@ Use -NoCaller to suppress this for a single
     call, or Set-DJMLogConfig -IncludeCaller $false to disable globally.
     A user-supplied Metadata.Caller value is never overwritten.
 
+    Setting the environment variable $env:DJMLOG_CALLER_OFF to any
+    non-empty value (including 'false' or '0') is an emergency escape
+    hatch that suppresses the Get-PSCallStack call entirely for hot paths.
+    Use it only when caller capture is a measured bottleneck.
+
 When -ErrorObject is provided alongside -Level ERROR, error context is
 captured under Metadata.Error with the following fields:
     ScriptName      - Path of the script where the error originated

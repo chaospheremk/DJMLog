@@ -76,6 +76,11 @@ task Test {
     $pesterConfig.CodeCoverage.Path = $Config.CoveragePaths | ForEach-Object {
         Join-Path $PSScriptRoot $_
     }
+    # Profiler-based coverage (UseBreakpoints=$false) emits per-statement hit
+    # counts in the JaCoCo report, giving us branch-level visibility on top of
+    # line coverage. Pester 5 does not surface a separate branch percentage;
+    # the JaCoCo XML carries the branch counters consumers can chart on.
+    $pesterConfig.CodeCoverage.UseBreakpoints = $false
 
     $result = Invoke-Pester -Configuration $pesterConfig
     assert ($result.FailedCount -eq 0) "Pester: $($result.FailedCount) test(s) failed."

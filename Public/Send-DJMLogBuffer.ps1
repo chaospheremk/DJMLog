@@ -5,26 +5,40 @@ function Send-DJMLogBuffer {
 
     .DESCRIPTION
     Sends buffered log entries to the configured Data Collection Rule (DCR) endpoint
-    in chunked batches of up to 500 KB each. Each record's UtcTimestamp is mapped to
-    the TimeGenerated field so timestamps remain accurate regardless of when the batch
-    is sent.
+    in chunked batches of up to 950 KB each (raw, pre-compression). Each record's
+    UtcTimestamp is mapped to the TimeGenerated field so timestamps remain accurate
+    regardless of when the batch is sent.
+
+    Chunking uses incremental UTF-8 byte accounting: each record's encoded length is
+    summed against a running batch size, and a new batch is started before the
+    cumulative size would cross the 950 KB threshold. Records whose individual
+    serialised size already exceeds 950 KB are rejected — they are removed from the
+    buffer and a SelfLog entry is queued so callers can detect the drop via
+    Get-DJMLogDiagnostics.
 
     Preconditions:
       - LogAnalyticsEnabled must be $true (via Set-DJMLogConfig)
       - DcrEndpointUri, DcrImmutableId, and DcrStreamName must be configured
       - The buffer must contain at least one entry
-      - Auto-flush must not be disabled (circuit breaker) unless -Force is used
+      - Auto-flush must not be disabled (circuit breaker) unless -Force is used,
+        or the half-open window (HalfOpenAfterSeconds, default 300s) has elapsed
 
-    On success, sent entries are removed from the buffer, the failure count is reset,
-    and auto-flush is re-enabled. On failure, the failure count is incremented and
-    auto-flush is disabled when MaxFlushRetries is reached. The function breaks on the
-    first batch failure so partially sent entries are removed while unsent entries
-    remain buffered for the next attempt.
+    Circuit breaker (per ADR-017):
+      Closed   - normal operation. Failures up to MaxFlushRetries trip the breaker.
+      Open     - auto-flush rejected; the call returns with a warning. -Force
+                 overrides.
+      HalfOpen - once HalfOpenAfterSeconds has elapsed since the breaker opened,
+                 the next non-Force call attempts a single-shot probe (MaxRetries=1).
+                 Success closes the breaker; failure refreshes the open timer.
+
+    HTTP requests (token acquisition + DCR POST) route through the
+    Invoke-DJMRestMethodWithRetry helper, which honours Retry-After on 429 and
+    applies exponential backoff with jitter on 5xx (per ADR-016).
 
     Buffer access is serialised through an in-process SemaphoreSlim
-    ($script:BufferLock) so concurrent Write-DJMLog and Send-DJMLogBuffer calls in
-    the same process cannot corrupt the underlying List. Cross-process file writes
-    are still serialised by the named OS mutex.
+    ($script:BufferLock) so concurrent Write-DJMLog and Send-DJMLogBuffer calls
+    in the same process cannot corrupt the underlying List. Cross-process file
+    writes are still serialised by the named OS mutex.
 
     .PARAMETER Force
     Bypasses the auto-flush circuit breaker. Use after investigating and resolving
@@ -70,10 +84,23 @@ function Send-DJMLogBuffer {
         return
     }
 
-    # Precondition: circuit breaker (unless -Force)
+    # Circuit breaker: closed / open / half-open
+    $isProbe = $false
     if ($script:AutoFlushDisabled -and -not $Force) {
-        Write-Warning "Send-DJMLogBuffer: auto-flush is disabled after $($script:MaxFlushRetries) consecutive failures. Use -Force to override or fix the underlying issue."
-        return
+        $halfOpenEligible = $false
+        if ($script:AutoFlushOpenedAtUtc) {
+            $elapsed = ([datetime]::UtcNow - $script:AutoFlushOpenedAtUtc).TotalSeconds
+            if ($elapsed -ge $script:HalfOpenAfterSeconds) {
+                $halfOpenEligible = $true
+            }
+        }
+        if ($halfOpenEligible) {
+            $isProbe = $true
+        }
+        else {
+            Write-Warning "Send-DJMLogBuffer: auto-flush is disabled after $($script:MaxFlushRetries) consecutive failures. Use -Force to override or fix the underlying issue."
+            return
+        }
     }
 
     # Acquire bearer token
@@ -81,9 +108,16 @@ function Send-DJMLogBuffer {
     if (-not $token) {
         Write-Warning 'Send-DJMLogBuffer: failed to acquire a bearer token. Buffer entries are preserved.'
         Add-DJMInternalError -Source 'Send-DJMLogBuffer' -Message 'Failed to acquire bearer token; buffer entries preserved'
+        if ($isProbe) {
+            $script:AutoFlushOpenedAtUtc = [datetime]::UtcNow
+            return
+        }
         $script:FlushFailureCount++
         if ($script:FlushFailureCount -ge $script:MaxFlushRetries) {
             $script:AutoFlushDisabled = $true
+            if (-not $script:AutoFlushOpenedAtUtc) {
+                $script:AutoFlushOpenedAtUtc = [datetime]::UtcNow
+            }
             Write-Warning "Send-DJMLogBuffer: auto-flush disabled after $($script:MaxFlushRetries) consecutive failures."
         }
         return
@@ -100,8 +134,17 @@ function Send-DJMLogBuffer {
         [void]$script:BufferLock.Release()
     }
 
-    # Map fields: UtcTimestamp -> TimeGenerated, serialise Metadata as JSON string
-    $mapped = [System.Collections.Generic.List[hashtable]]::new($snapshot.Count)
+    # Map fields and build chunked batches with incremental UTF-8 byte accounting.
+    # Records exceeding 950 KB on their own are rejected (and removed from the
+    # live buffer so they don't poison subsequent flushes).
+    $maxBatchBytes  = 950 * 1024
+    $batches        = [System.Collections.Generic.List[System.Collections.Generic.List[hashtable]]]::new()
+    $batchSources   = [System.Collections.Generic.List[System.Collections.Generic.List[hashtable]]]::new()
+    $oversized     = [System.Collections.Generic.List[hashtable]]::new()
+    $current       = [System.Collections.Generic.List[hashtable]]::new()
+    $currentSrc    = [System.Collections.Generic.List[hashtable]]::new()
+    $currentSize   = 2  # account for JSON array brackets []
+
     foreach ($entry in $snapshot) {
         $record = @{
             TimeGenerated = $entry['UtcTimestamp']
@@ -119,56 +162,104 @@ function Send-DJMLogBuffer {
                 Add-DJMInternalError -Source 'Send-DJMLogBuffer' -Message 'Metadata serialization failed' -Exception $_.Exception
             }
         }
-        $mapped.Add($record)
-    }
 
-    # Chunk into batches <= 500 KB
-    $maxBatchBytes = 500 * 1024
-    $batches   = [System.Collections.Generic.List[System.Collections.Generic.List[hashtable]]]::new()
-    $current   = [System.Collections.Generic.List[hashtable]]::new()
-    $currentSize = 2  # account for JSON array brackets []
-
-    foreach ($record in $mapped) {
         $recordJson = $record | ConvertTo-Json -Compress -Depth 5
         $recordSize = [System.Text.Encoding]::UTF8.GetByteCount($recordJson) + 1  # +1 for comma
 
+        if ($recordSize -gt $maxBatchBytes) {
+            Add-DJMInternalError -Source 'Send-DJMLogBuffer' -Message "Single record exceeds 950 KB after serialisation ($recordSize bytes); record dropped"
+            Write-Warning "Send-DJMLogBuffer: single record exceeds 950 KB ($recordSize bytes) and was dropped."
+            $oversized.Add($entry)
+            continue
+        }
+
         if ($current.Count -gt 0 -and ($currentSize + $recordSize) -gt $maxBatchBytes) {
             $batches.Add($current)
-            $current = [System.Collections.Generic.List[hashtable]]::new()
+            $batchSources.Add($currentSrc)
+            $current     = [System.Collections.Generic.List[hashtable]]::new()
+            $currentSrc  = [System.Collections.Generic.List[hashtable]]::new()
             $currentSize = 2
         }
 
         $current.Add($record)
+        $currentSrc.Add($entry)
         $currentSize += $recordSize
     }
 
     if ($current.Count -gt 0) {
         $batches.Add($current)
+        $batchSources.Add($currentSrc)
+    }
+
+    # Drop oversized entries from the live buffer so they don't get retried.
+    if ($oversized.Count -gt 0) {
+        $script:BufferLock.Wait()
+        try {
+            foreach ($bad in $oversized) {
+                if ($script:LogBuffer.Remove($bad)) {
+                    $script:BufferByteTotal = [math]::Max(0, $script:BufferByteTotal - (Get-DJMEntryByteCount -Entry $bad))
+                }
+            }
+        }
+        finally {
+            [void]$script:BufferLock.Release()
+        }
+    }
+
+    if ($batches.Count -eq 0) {
+        # Nothing left to send (all records were oversized). Treat as a no-op
+        # success so we don't trip the circuit breaker on bad-data alone.
+        Write-Verbose 'Send-DJMLogBuffer: no eligible records after oversize filtering.'
+        return
+    }
+
+    # On a half-open probe we only attempt the first batch with no retry. Either
+    # the breaker closes (success) or the open timer is refreshed (failure).
+    if ($isProbe -and $batches.Count -gt 1) {
+        $batches      = [System.Collections.Generic.List[System.Collections.Generic.List[hashtable]]]::new(@($batches[0]))
+        $batchSources = [System.Collections.Generic.List[System.Collections.Generic.List[hashtable]]]::new(@($batchSources[0]))
     }
 
     # POST each batch
     $uri = "$($script:DcrEndpointUri)/dataCollectionRules/$($script:DcrImmutableId)/streams/$($script:DcrStreamName)?api-version=2023-01-01"
     $headers = @{
         Authorization  = "Bearer $token"
-        'Content-Type' = 'application/json'
     }
 
-    $totalSent = 0
-    foreach ($batch in $batches) {
+    $sentEntries = [System.Collections.Generic.List[hashtable]]::new()
+
+    for ($i = 0; $i -lt $batches.Count; $i++) {
+        $batch    = $batches[$i]
+        $sources  = $batchSources[$i]
         $jsonBody = $batch | ConvertTo-Json -Depth 5 -AsArray
         try {
-            Invoke-RestMethod -Uri $uri -Method POST -Headers $headers -Body $jsonBody -ErrorAction Stop
-            $totalSent += $batch.Count
+            $retryParams = @{
+                Uri         = $uri
+                Method      = 'POST'
+                Headers     = $headers
+                Body        = $jsonBody
+                ContentType = 'application/json'
+                MaxRetries  = if ($isProbe) { 1 } else { 5 }
+            }
+            Invoke-DJMRestMethodWithRetry @retryParams | Out-Null
+            foreach ($src in $sources) { $sentEntries.Add($src) }
         }
         catch {
             Write-Warning "Send-DJMLogBuffer: batch POST failed: $_"
             Add-DJMInternalError -Source 'Send-DJMLogBuffer' -Message "Batch POST failed: $($_.Exception.Message)" -Exception $_.Exception
-            if ($totalSent -gt 0) {
-                Remove-DJMSentEntries -Snapshot $snapshot -Count $totalSent
+            if ($sentEntries.Count -gt 0) {
+                Remove-DJMSentEntries -Snapshot $sentEntries -Count $sentEntries.Count
+            }
+            if ($isProbe) {
+                $script:AutoFlushOpenedAtUtc = [datetime]::UtcNow
+                return
             }
             $script:FlushFailureCount++
             if ($script:FlushFailureCount -ge $script:MaxFlushRetries) {
                 $script:AutoFlushDisabled = $true
+                if (-not $script:AutoFlushOpenedAtUtc) {
+                    $script:AutoFlushOpenedAtUtc = [datetime]::UtcNow
+                }
                 Write-Warning "Send-DJMLogBuffer: auto-flush disabled after $($script:MaxFlushRetries) consecutive failures."
             }
             return
@@ -177,10 +268,13 @@ function Send-DJMLogBuffer {
 
     # All batches succeeded — remove sent entries from the live buffer by reference,
     # not by index. A concurrent Write-DJMLog at MaxBufferSize may have evicted the
-    # head entry during the HTTP POST, so the snapshot's [0..totalSent-1] slice is
-    # no longer guaranteed to align with the live buffer's [0..totalSent-1].
-    Remove-DJMSentEntries -Snapshot $snapshot -Count $totalSent
-    $script:FlushFailureCount  = 0
-    $script:AutoFlushDisabled  = $false
-    Write-Verbose "Send-DJMLogBuffer: successfully sent $totalSent entries."
+    # head entry during the HTTP POST, so the snapshot's [0..N-1] slice is no longer
+    # guaranteed to align with the live buffer's [0..N-1].
+    if ($sentEntries.Count -gt 0) {
+        Remove-DJMSentEntries -Snapshot $sentEntries -Count $sentEntries.Count
+    }
+    $script:FlushFailureCount    = 0
+    $script:AutoFlushDisabled    = $false
+    $script:AutoFlushOpenedAtUtc = $null
+    Write-Verbose "Send-DJMLogBuffer: successfully sent $($sentEntries.Count) entries."
 }

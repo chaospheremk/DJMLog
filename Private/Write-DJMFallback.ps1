@@ -6,6 +6,7 @@
 # Never throws — fallback failures are silently swallowed so the caller's
 # original error is preserved.
 function Write-DJMFallback {
+    [CmdletBinding()]
     param (
         [Parameter(Mandatory)]
         [string]$Message,

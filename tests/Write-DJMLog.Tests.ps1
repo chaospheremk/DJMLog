@@ -21,10 +21,12 @@ Describe 'Write-DJMLog' {
             $script:DefaultIncludeCaller    = $true
             $script:LogAnalyticsEnabled     = $false
             $script:LogBuffer               = [System.Collections.Generic.List[hashtable]]::new()
+            $script:BufferByteTotal         = 0
             $script:FlushFailureCount       = 0
             $script:AutoFlushDisabled       = $false
             $script:FlushThreshold          = 100
             $script:MaxBufferSize           = 5000
+            $script:MaxBufferBytes          = 52428800
         }
     }
 
@@ -423,6 +425,26 @@ Describe 'Write-DJMLog' {
             $entry.Metadata.JobId   | Should -Be 99
             $entry.Metadata.Caller  | Should -Not -BeNullOrEmpty
         }
+
+        It '$env:DJMLOG_CALLER_OFF=1 escape hatch suppresses Caller capture (H4)' {
+            $original = $env:DJMLOG_CALLER_OFF
+            try {
+                $env:DJMLOG_CALLER_OFF = '1'
+                Write-DJMLog -Message 'Hot-path skip'
+                $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+                if ($entry.PSObject.Properties.Name -contains 'Metadata') {
+                    $entry.Metadata.PSObject.Properties.Name | Should -Not -Contain 'Caller'
+                }
+            }
+            finally {
+                if ($null -eq $original) {
+                    Remove-Item Env:DJMLOG_CALLER_OFF -ErrorAction SilentlyContinue
+                }
+                else {
+                    $env:DJMLOG_CALLER_OFF = $original
+                }
+            }
+        }
     }
 
     Context 'Log Analytics buffer' {
@@ -589,11 +611,113 @@ Describe 'Write-DJMLog' {
                 $remaining.Count | Should -BeLessOrEqual 3
 
                 # The locked-file failure should appear in the SelfLog
-                (Get-DJMLogDiagnostics).Count | Should -BeGreaterOrEqual 1
+                @((Get-DJMLogDiagnostics).Errors).Count | Should -BeGreaterOrEqual 1
             }
             finally {
                 $lockedStream.Dispose()
                 Get-ChildItem -Path $dir -Filter "${base}*.jsonl" | Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'MaxBufferBytes drop-head (H3)' {
+
+        BeforeEach {
+            InModuleScope DJMLog {
+                $script:LogAnalyticsEnabled = $true
+                $script:FlushThreshold      = 10000   # high threshold so auto-flush doesn't interfere
+                $script:MaxBufferSize       = 5000    # high count cap so only bytes cap fires
+                $script:MaxBufferBytes      = 1024    # 1 KB bytes cap
+                $script:AutoFlushDisabled   = $false
+                $script:LogBuffer           = [System.Collections.Generic.List[hashtable]]::new()
+                $script:InternalErrors      = [System.Collections.Generic.Queue[pscustomobject]]::new()
+            }
+        }
+
+        AfterEach {
+            InModuleScope DJMLog {
+                $script:MaxBufferBytes  = 52428800   # reset to default 50 MB
+                $script:LogAnalyticsEnabled = $false
+                $script:LogBuffer       = [System.Collections.Generic.List[hashtable]]::new()
+            }
+        }
+
+        It 'drops the oldest entry when total buffer bytes would exceed MaxBufferBytes' {
+            # Write entries until byte cap must trigger — each entry serialises to ~100 bytes
+            # With MaxBufferBytes = 1024, writing ~12 entries should start evicting
+            for ($i = 1; $i -le 15; $i++) {
+                Write-DJMLog -Message "Entry-$i" -WarningAction SilentlyContinue
+            }
+
+            # The head (oldest) must have been dropped; buffer count must be less than 15
+            $count = InModuleScope DJMLog { $script:LogBuffer.Count }
+            $count | Should -BeLessThan 15
+
+            # The first remaining message should NOT be 'Entry-1' (it was evicted)
+            $firstMsg = InModuleScope DJMLog { $script:LogBuffer[0]['Message'] }
+            $firstMsg | Should -Not -Be 'Entry-1'
+        }
+
+        It 'records a SelfLog entry when buffer is full (bytes)' {
+            for ($i = 1; $i -le 15; $i++) {
+                Write-DJMLog -Message "ByteFull-$i" -WarningAction SilentlyContinue
+            }
+
+            $diag = Get-DJMLogDiagnostics
+            $bufferFullEntry = @($diag.Errors) | Where-Object { $_.Message -match 'buffer.*full.*bytes|bytes.*buffer.*full|MaxBufferBytes' }
+            $bufferFullEntry | Should -Not -BeNullOrEmpty
+        }
+
+        It 'hits the count cap first when MaxBufferSize is smaller than MaxBufferBytes would allow' {
+            InModuleScope DJMLog {
+                $script:MaxBufferSize  = 3      # only 3 entries allowed by count
+                $script:MaxBufferBytes = 1048576  # 1 MB bytes cap — won't be hit first
+            }
+
+            Write-DJMLog -Message 'One'
+            Write-DJMLog -Message 'Two'
+            Write-DJMLog -Message 'Three'
+            Write-DJMLog -Message 'Four' -WarningAction SilentlyContinue
+
+            $count = InModuleScope DJMLog { $script:LogBuffer.Count }
+            $count | Should -Be 3
+
+            $firstMsg = InModuleScope DJMLog { $script:LogBuffer[0]['Message'] }
+            $firstMsg | Should -Be 'Two'
+        }
+
+        It 'hits the bytes cap first when MaxBufferBytes is smaller than count cap would allow' {
+            InModuleScope DJMLog {
+                $script:MaxBufferSize  = 10000  # high count cap
+                $script:MaxBufferBytes = 256    # tiny bytes cap — will be hit first
+            }
+
+            for ($i = 1; $i -le 10; $i++) {
+                Write-DJMLog -Message "BytesFirst-$i" -WarningAction SilentlyContinue
+            }
+
+            $count = InModuleScope DJMLog { $script:LogBuffer.Count }
+            $count | Should -BeLessThan 10
+        }
+    }
+
+    Context 'Log line ending (M1)' {
+
+        It 'last byte of every log entry is LF (0x0A), not CRLF, even on Windows' {
+            Write-DJMLog -Message 'LF check'
+
+            $bytes = [System.IO.File]::ReadAllBytes($script:LogFile)
+            $bytes.Count | Should -BeGreaterThan 0
+
+            # Find where the first newline sequence ends
+            # Last byte of the entry line must be 0x0A (LF)
+            $lastByte = $bytes[$bytes.Count - 1]
+            $lastByte | Should -Be 0x0A
+
+            # And the byte before must NOT be 0x0D (CR) — ruling out CRLF
+            if ($bytes.Count -ge 2) {
+                $secondToLast = $bytes[$bytes.Count - 2]
+                $secondToLast | Should -Not -Be 0x0D
             }
         }
     }

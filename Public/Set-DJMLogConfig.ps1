@@ -17,6 +17,16 @@ function Set-DJMLogConfig {
     leave the corresponding module default unchanged. The same rule applies to
     explicit parameters -- omitting a parameter does not reset its module default.
 
+    Log Analytics validation:
+        When LogAnalyticsEnabled is $true (either set on this call or already
+        on from a prior call), the cmdlet validates that DcrEndpointUri,
+        DcrImmutableId, DcrStreamName, and an authentication method are all
+        configured. Missing fields surface as a single non-terminating error
+        listing every gap. Supplied parameters are still committed to module
+        state -- callers may complete the configuration on a follow-up call
+        without restarting -- but Send-DJMLogBuffer will fail at flush time
+        until every required field is in place.
+
     When any Log Analytics parameter is set, the circuit breaker state is reset
     (FlushFailureCount = 0, AutoFlushDisabled = $false).
 
@@ -141,6 +151,13 @@ function Set-DJMLogConfig {
     Maximum number of entries the buffer can hold. When reached, the oldest
     entry is dropped with a warning. Defaults to 5000.
 
+    .PARAMETER MaxBufferBytes
+    Maximum total serialised size of the buffer in bytes. When adding a new
+    entry would push the running total past this cap, the oldest entries are
+    dropped (FIFO) until the new entry fits. Set to 0 to disable the byte
+    cap (count cap from MaxBufferSize still applies). Defaults to 52428800
+    bytes (50 MB).
+
     .PARAMETER MaxFlushRetries
     Number of consecutive flush failures before the auto-flush circuit breaker
     trips. Use Send-DJMLogBuffer -Force to override. Defaults to 3.
@@ -248,6 +265,9 @@ function Set-DJMLogConfig {
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxBufferSize,
 
+        [ValidateRange(0, [long]::MaxValue)]
+        [long]$MaxBufferBytes,
+
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxFlushRetries,
 
@@ -333,6 +353,9 @@ function Set-DJMLogConfig {
                 }
                 if ($fileConfig.PSObject.Properties['MaxBufferSize'] -and -not $PSBoundParameters.ContainsKey('MaxBufferSize')) {
                     $MaxBufferSize = [int]$fileConfig.MaxBufferSize
+                }
+                if ($fileConfig.PSObject.Properties['MaxBufferBytes'] -and -not $PSBoundParameters.ContainsKey('MaxBufferBytes')) {
+                    $MaxBufferBytes = [long]$fileConfig.MaxBufferBytes
                 }
                 if ($fileConfig.PSObject.Properties['MaxFlushRetries'] -and -not $PSBoundParameters.ContainsKey('MaxFlushRetries')) {
                     $MaxFlushRetries = [int]$fileConfig.MaxFlushRetries
@@ -451,6 +474,10 @@ function Set-DJMLogConfig {
         $script:MaxBufferSize = $MaxBufferSize
         $laParamTouched = $true
     }
+    if ($PSBoundParameters.ContainsKey('MaxBufferBytes')      -or ($ConfigPath -and $null -ne $MaxBufferBytes)) {
+        $script:MaxBufferBytes = $MaxBufferBytes
+        $laParamTouched = $true
+    }
     if ($PSBoundParameters.ContainsKey('MaxFlushRetries')     -or ($ConfigPath -and $null -ne $MaxFlushRetries)) {
         $script:MaxFlushRetries = $MaxFlushRetries
         $laParamTouched = $true
@@ -458,7 +485,51 @@ function Set-DJMLogConfig {
 
     # Reset circuit breaker when any LA param is changed
     if ($laParamTouched) {
-        $script:FlushFailureCount = 0
-        $script:AutoFlushDisabled = $false
+        $script:FlushFailureCount    = 0
+        $script:AutoFlushDisabled    = $false
+        $script:AutoFlushOpenedAtUtc = $null
+    }
+
+    # M5 — DcrEndpointUri host should match CloudEnvironment domain. Emit a
+    # warning (not an error) so sovereign-cloud edge cases can still proceed.
+    # Fires whenever both CloudEnvironment and DcrEndpointUri are configured,
+    # regardless of LogAnalyticsEnabled — misconfig should surface as soon as
+    # the values disagree.
+    if ($script:CloudEnvironment -and $script:DcrEndpointUri) {
+        $expectedSuffix = if ($script:CloudEnvironment -eq 'Commercial') { 'azure.com' } else { 'azure.us' }
+        try {
+            $endpointHost = ([uri]$script:DcrEndpointUri).Host
+        }
+        catch {
+            $endpointHost = $script:DcrEndpointUri
+        }
+        if ($endpointHost -notlike "*$expectedSuffix") {
+            Write-Warning "Set-DJMLogConfig: DcrEndpointUri host '$endpointHost' does not match CloudEnvironment '$($script:CloudEnvironment)' (expected '*$expectedSuffix'). Verify your endpoint."
+        }
+    }
+
+    # M2 — When Log Analytics is enabled (newly or already), the configuration
+    # must be complete. Emit a single consolidated error listing every missing
+    # field so the caller can fix everything in one pass.
+    if ($script:LogAnalyticsEnabled) {
+        $missing = [System.Collections.Generic.List[string]]::new()
+        if (-not $script:DcrEndpointUri) { $missing.Add('DcrEndpointUri') }
+        if (-not $script:DcrImmutableId) { $missing.Add('DcrImmutableId') }
+        if (-not $script:DcrStreamName)  { $missing.Add('DcrStreamName') }
+
+        $hasBearer = [bool]$script:BearerTokenExternal
+        if (-not $hasBearer) {
+            if (-not $script:TenantId) { $missing.Add('TenantId') }
+            if (-not $script:AppId)    { $missing.Add('AppId') }
+            $hasAuth = $script:AppSecret -or $script:CertificateSubject -or $script:CertificateThumbprint
+            if (-not $hasAuth) {
+                $missing.Add('one of AppSecret/CertificateSubject/CertificateThumbprint/BearerToken')
+            }
+        }
+
+        if ($missing.Count -gt 0) {
+            $message = "Set-DJMLogConfig: Log Analytics is enabled but the following required fields are missing: $($missing -join ', ')."
+            Write-Error -Message $message -Category InvalidArgument
+        }
     }
 }

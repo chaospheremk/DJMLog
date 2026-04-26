@@ -311,7 +311,7 @@ function Read-DJMLog {
 
         if ($ExportCsv -and ($results.Count -gt 0)) {
             try {
-                $results | Export-Csv -LiteralPath $CsvPath -Force
+                $results | Export-Csv -LiteralPath $CsvPath -Encoding ([System.Text.Encoding]::UTF8) -Force
                 Write-Host "Read-DJMLog: exported $($results.Count) entries to '$CsvPath'" -ForegroundColor Green
             }
             catch {

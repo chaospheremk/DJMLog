@@ -28,7 +28,10 @@ function Remove-DJMSentEntries {
     $script:BufferLock.Wait()
     try {
         for ($i = 0; $i -lt $Count; $i++) {
-            [void]$script:LogBuffer.Remove($Snapshot[$i])
+            $entry = $Snapshot[$i]
+            if ($script:LogBuffer.Remove($entry)) {
+                $script:BufferByteTotal = [math]::Max(0, $script:BufferByteTotal - (Get-DJMEntryByteCount -Entry $entry))
+            }
         }
     }
     finally {

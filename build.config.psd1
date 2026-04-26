@@ -10,7 +10,7 @@
     OutputDir        = 'output'
     PSSASettingsPath = 'PSScriptAnalyzerSettings.psd1'
     CoveragePaths    = @('Public', 'Private')
-    CoverageThreshold = 50
+    CoverageThreshold = 70
     CoverageFormat   = 'JaCoCo'
     AcrRepoName      = 'HomeACR'
 }
