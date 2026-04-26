@@ -33,9 +33,11 @@ function Flush-DJMLog {
     Flush-DJMLog -Force
 
     .NOTES
-    Cmdlet name uses an unapproved verb (Flush) per the v2.0 plan; the
-    approved analogue (Sync) was rejected to avoid confusion with the dual-track
-    sync-dev workflow used by the project's CI.
+    The verb 'Flush' is the de-facto standard term for draining a logging
+    buffer (Serilog Flush, NLog Flush, Microsoft.Extensions.Logging Flush).
+    PowerShell does not include it in the approved-verbs list; the cmdlet
+    suppresses PSUseApprovedVerbs at the call site rather than rename to a
+    less-discoverable approved verb such as Sync- or Submit-.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseApprovedVerbs', '',
         Justification = 'Flush is the established term for a logging-buffer drain (Serilog Flush, NLog Flush).')]

@@ -97,7 +97,7 @@ function Read-DJMLog {
 
         [switch]$ExportCsv,
 
-        [string]$CsvPath = "$(Get-Location)\log.csv",
+        [string]$CsvPath,
 
         [switch]$OutGridView,
 
@@ -113,6 +113,10 @@ function Read-DJMLog {
             $LogPath = if ($script:DefaultLogPath) { $script:DefaultLogPath }
                        else { "$(Get-Location)\log.jsonl" }
         }
+        # Resolve CsvPath at call time so a caller who changed directory after
+        # module load gets the expected default. (Default parameter values are
+        # evaluated at function-definition time, so we cannot rely on them.)
+        if (-not $CsvPath) { $CsvPath = "$(Get-Location)\log.csv" }
 
         $earlyExit = $false
 

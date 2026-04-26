@@ -40,7 +40,7 @@ Read-DJMLog -Path ./automation.jsonl -Level ERROR
 ## Features
 
 - **Atomic writes** — named OS mutex prevents file-lock contention across parallel runspaces
-- **Log rotation** — automatic file rotation by size (`MaxSizeMB`) or schedule (Daily/Weekly/Monthly) with configurable retention policies
+- **Log rotation** — automatic file rotation by size (`MaxSizeMB`) or schedule (`Daily` / `Hourly`) with configurable retention policies
 - **Min-level filtering** — `MinLevel` threshold silently drops entries below the configured severity
 - **Caller auto-capture** — automatically records the calling script and line number in each log entry (enabled by default)
 - **Structured metadata** — nested metadata is flattened to top-level columns for `Export-Csv` and `Out-GridView`

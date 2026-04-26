@@ -163,5 +163,8 @@ if (-not $env:DJMLOG_WRITER_ROLE) {
             Message      = "Failed to start writer runspace: $($_.Exception.Message)"
             Exception    = $_.Exception
         })
+        # Roll back any partial state so the next Start-DJMWriter call (or a
+        # Stop-DJMWriter from cleanup) doesn't trip on inconsistent fields.
+        try { Stop-DJMWriter -TimeoutMs 500 } catch { $null = $_ }
     }
 }

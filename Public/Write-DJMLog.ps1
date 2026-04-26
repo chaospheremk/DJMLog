@@ -81,6 +81,10 @@ function Write-DJMLog {
 
     .PARAMETER PassThru
     Emit the entry to the pipeline as a PSCustomObject in addition to enqueueing.
+    Note: redaction has already been applied to the returned object — values
+    matching the always-on rules (SecureString / PSCredential / sensitive
+    metadata keys) and any configured RedactionPatterns / RedactionPresets are
+    `[REDACTED]` in the PassThru object.
 
     .OUTPUTS
     None by default. PSCustomObject when -PassThru is specified.
@@ -188,9 +192,16 @@ function Write-DJMLog {
             }
         }
 
-        if ($ErrorObject -and $upperLevel -ne 'ERROR' -and $upperLevel -ne 'FATAL') {
-            Write-Warning "Write-DJMLog: -ErrorObject was supplied but -Level is '$Level'. Error context not captured."
-            return
+        # When -ErrorObject is supplied alongside a non-ERROR/FATAL level, warn
+        # the caller and continue without the error enrichment. Dropping the
+        # entire entry (the v2.0 first-draft behaviour) silently masked the
+        # caller's log message, which is worse than the missing error context.
+        $captureError = $false
+        if ($ErrorObject -and ($upperLevel -eq 'ERROR' -or $upperLevel -eq 'FATAL')) {
+            $captureError = $true
+        }
+        elseif ($ErrorObject) {
+            Write-Warning "Write-DJMLog: -ErrorObject was supplied but -Level is '$Level'. Error context not captured. Set -Level ERROR or FATAL to record error details."
         }
 
         # SeverityNumber per OTel spec: TRACE=1-4, DEBUG=5-8, INFO=9-12, WARN=13-16, ERROR=17-20, FATAL=21-24
@@ -212,7 +223,7 @@ function Write-DJMLog {
 
         # Metadata block
         $metadataEntry = $null
-        if ($Metadata -or ($ErrorObject -and ($upperLevel -eq 'ERROR' -or $upperLevel -eq 'FATAL'))) {
+        if ($Metadata -or $captureError) {
             $metadataEntry = [System.Collections.Generic.Dictionary[string, PSObject]]::new()
         }
 
@@ -229,7 +240,7 @@ function Write-DJMLog {
         }
 
         # Error capture
-        if ($ErrorObject -and ($upperLevel -eq 'ERROR' -or $upperLevel -eq 'FATAL')) {
+        if ($captureError) {
             if (-not $metadataEntry) { $metadataEntry = [System.Collections.Generic.Dictionary[string, PSObject]]::new() }
             $errorEntry = [System.Collections.Generic.Dictionary[string, PSObject]]::new()
             $invocationInfo = $ErrorObject.InvocationInfo
@@ -295,15 +306,11 @@ function Write-DJMLog {
             $entry['CorrelationId'] = (New-Guid).Guid
         }
 
-        # Redaction
-        if ($script:RedactionPatterns -or $script:RedactionPresets) {
-            try { [void](Invoke-DJMRedaction -Value $entry) } catch { $null = $_ }
-        }
-        else {
-            # Even with no configured patterns/presets, run the always-on rules
-            # (SecureString / PSCredential / sensitive-key detection).
-            try { [void](Invoke-DJMRedaction -Value $entry) } catch { $null = $_ }
-        }
+        # Redaction. Always-on rules (SecureString / PSCredential / sensitive
+        # metadata key names) fire regardless of configured patterns/presets,
+        # so this call is unconditional. Failures are swallowed so a regex
+        # bug never blocks the log entry from reaching the channel.
+        try { [void](Invoke-DJMRedaction -Value $entry) } catch { $null = $_ }
 
         # Push onto channel. Per-call file-sink overrides are carried as
         # sidecars; the File sink reads them with fallback to Shared defaults.

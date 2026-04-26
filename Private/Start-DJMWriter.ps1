@@ -278,7 +278,11 @@ function Start-DJMWriter {
             param ($Entry)
             $level = [string]$Entry.Level
             $color = $Shared.ConsoleColors[$level]
-            if (-not $color) { $color = 'Gray' }
+            # Validate against the ConsoleColor enum so a misspelled value
+            # (e.g. 'grey' vs 'Gray') doesn't render as Black/invisible.
+            if (-not $color -or -not [System.Enum]::IsDefined([System.ConsoleColor], $color)) {
+                $color = 'Gray'
+            }
             $abbr = switch ($level) {
                 'FATAL' { 'FTL' } 'ERROR' { 'ERR' } 'WARN' { 'WRN' }
                 'INFO'  { 'INF' } 'DEBUG' { 'DBG' } default { '???' }
@@ -287,12 +291,21 @@ function Start-DJMWriter {
             try { $ts = [datetime]$Entry.UtcTimestamp } catch { $ts = [datetime]::UtcNow }
             $local = $ts.ToLocalTime()
             $msg = "$($local.ToString('yyyy-MM-dd HH:mm:ss')) [$abbr] $($Entry.Message)"
+            # Always restore the colour even if WriteLine throws (e.g. ObjectDisposed
+            # on host shutdown). Without this the console can be left in a
+            # foreground-changed state permanently.
+            $colorChanged = $false
             try {
                 [Console]::ForegroundColor = [System.ConsoleColor]::$color
+                $colorChanged = $true
                 [Console]::WriteLine($msg)
-                [Console]::ResetColor()
             }
             catch { $null = $_ }
+            finally {
+                if ($colorChanged) {
+                    try { [Console]::ResetColor() } catch { $null = $_ }
+                }
+            }
         }
 
         function Invoke-EventLogSink {
@@ -732,8 +745,15 @@ function Wait-DJMProcessed {
     try {
         $fence = @{ _Fence = $fenceId }
         if (-not $script:WriterChannel.Writer.TryWrite($fence)) { return $false }
-        if ($TimeoutMs -lt 0) { return $mre.Wait() }
-        else                  { return $mre.Wait($TimeoutMs) }
+        if ($TimeoutMs -lt 0) {
+            # ManualResetEventSlim.Wait() with no args returns void; the bool
+            # overloads only exist for the timeout/cancel forms. Wait
+            # unconditionally then return $true so callers get a meaningful
+            # [bool] result on the indefinite-wait path.
+            $mre.Wait()
+            return $true
+        }
+        return $mre.Wait($TimeoutMs)
     }
     finally {
         $removed = $null
