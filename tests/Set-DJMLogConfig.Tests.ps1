@@ -219,7 +219,9 @@ Describe 'Set-DJMLogConfig' {
     Context 'Log Analytics parameters' {
 
         It 'sets LogAnalyticsEnabled' {
-            Set-DJMLogConfig -LogAnalyticsEnabled $true
+            # M2 validation will emit a non-terminating error because no DCE/DCR/auth
+            # is supplied; suppress with -ErrorAction so Pester doesn't fail the test.
+            Set-DJMLogConfig -LogAnalyticsEnabled $true -ErrorAction SilentlyContinue
             InModuleScope DJMLog { $script:LogAnalyticsEnabled } | Should -Be $true
         }
 
@@ -339,7 +341,8 @@ Describe 'Set-DJMLogConfig' {
 
         It 'loads LogAnalyticsEnabled from config file' {
             '{ "LogAnalyticsEnabled": true }' | Set-Content -LiteralPath $script:LAConfigFile
-            Set-DJMLogConfig -ConfigPath $script:LAConfigFile
+            # Same suppression rationale as the direct -LogAnalyticsEnabled test above.
+            Set-DJMLogConfig -ConfigPath $script:LAConfigFile -ErrorAction SilentlyContinue
             InModuleScope DJMLog { $script:LogAnalyticsEnabled } | Should -Be $true
         }
 
