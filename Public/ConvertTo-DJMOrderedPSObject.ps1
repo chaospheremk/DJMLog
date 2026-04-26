@@ -25,6 +25,7 @@ function ConvertTo-DJMOrderedPSObject {
     $object | Format-List
     #>
     [CmdletBinding()]
+    [OutputType([pscustomobject])]
     param (
         [Parameter(Mandatory)]
         [System.Collections.IDictionary]$Dictionary

@@ -45,13 +45,23 @@ $script:TokenExpiry             = [datetime]::MinValue
 $script:FlushFailureCount       = 0
 $script:AutoFlushDisabled       = $false
 
+# Internal error queue (SelfLog) — last 100 errors, FIFO. Surfaced via Get-DJMLogDiagnostics.
+$script:InternalErrors          = [System.Collections.Generic.Queue[pscustomobject]]::new()
+$script:InternalErrorsMaxSize   = 100
+
+# In-process semaphore guarding $script:LogBuffer reads/writes. Same-process only —
+# the named OS mutex serialises file appends across runspaces; this semaphore is the
+# v1.1 interim fix for the buffer race (superseded by the async writer in v2.0).
+$script:BufferLock = [System.Threading.SemaphoreSlim]::new(1, 1)
+
 # Named mutex shared across all runspaces on this machine via the OS kernel.
 # Serialises AppendAllText calls so parallel writers never contend on the file.
 $script:LogMutex = [System.Threading.Mutex]::new($false, 'DJMLog_WriteAccess')
 
-# Dispose mutex when module is removed to avoid OS resource leaks
+# Dispose mutex + semaphore when module is removed to avoid OS resource leaks
 $MyInvocation.MyCommand.ScriptBlock.Module.OnRemove = {
-    if ($script:LogMutex) { $script:LogMutex.Dispose() }
+    if ($script:LogMutex)   { $script:LogMutex.Dispose() }
+    if ($script:BufferLock) { $script:BufferLock.Dispose() }
 }
 
 # Dot-source all private helpers then all public functions

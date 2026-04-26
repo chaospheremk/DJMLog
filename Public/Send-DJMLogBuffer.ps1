@@ -21,6 +21,11 @@ function Send-DJMLogBuffer {
     first batch failure so partially sent entries are removed while unsent entries
     remain buffered for the next attempt.
 
+    Buffer access is serialised through an in-process SemaphoreSlim
+    ($script:BufferLock) so concurrent Write-DJMLog and Send-DJMLogBuffer calls in
+    the same process cannot corrupt the underlying List. Cross-process file writes
+    are still serialised by the named OS mutex.
+
     .PARAMETER Force
     Bypasses the auto-flush circuit breaker. Use after investigating and resolving
     the underlying connectivity or configuration issue.
@@ -34,6 +39,7 @@ function Send-DJMLogBuffer {
     Send-DJMLogBuffer -Force
     #>
     [CmdletBinding()]
+    [OutputType([void])]
     param (
         [switch]$Force
     )
@@ -50,8 +56,16 @@ function Send-DJMLogBuffer {
         return
     }
 
-    # Precondition: buffer non-empty
-    if ($script:LogBuffer.Count -eq 0) {
+    # Snapshot buffer count under the semaphore to avoid racing with Write-DJMLog
+    $bufferEmpty = $false
+    $script:BufferLock.Wait()
+    try {
+        $bufferEmpty = ($script:LogBuffer.Count -eq 0)
+    }
+    finally {
+        [void]$script:BufferLock.Release()
+    }
+    if ($bufferEmpty) {
         Write-Verbose 'Send-DJMLogBuffer: buffer is empty, nothing to send.'
         return
     }
@@ -66,6 +80,7 @@ function Send-DJMLogBuffer {
     $token = Get-DJMBearerToken
     if (-not $token) {
         Write-Warning 'Send-DJMLogBuffer: failed to acquire a bearer token. Buffer entries are preserved.'
+        Add-DJMInternalError -Source 'Send-DJMLogBuffer' -Message 'Failed to acquire bearer token; buffer entries preserved'
         $script:FlushFailureCount++
         if ($script:FlushFailureCount -ge $script:MaxFlushRetries) {
             $script:AutoFlushDisabled = $true
@@ -74,8 +89,16 @@ function Send-DJMLogBuffer {
         return
     }
 
-    # Snapshot the buffer indices for removal tracking
-    $snapshot = [System.Collections.Generic.List[hashtable]]::new($script:LogBuffer)
+    # Snapshot the buffer under the semaphore so a concurrent Write-DJMLog cannot
+    # mutate the source list while we copy it.
+    $snapshot = $null
+    $script:BufferLock.Wait()
+    try {
+        $snapshot = [System.Collections.Generic.List[hashtable]]::new($script:LogBuffer)
+    }
+    finally {
+        [void]$script:BufferLock.Release()
+    }
 
     # Map fields: UtcTimestamp -> TimeGenerated, serialise Metadata as JSON string
     $mapped = [System.Collections.Generic.List[hashtable]]::new($snapshot.Count)
@@ -93,6 +116,7 @@ function Send-DJMLogBuffer {
             catch {
                 $record['Metadata'] = '<serialization error>'
                 Write-Warning "Send-DJMLogBuffer: failed to serialize Metadata for entry: $_"
+                Add-DJMInternalError -Source 'Send-DJMLogBuffer' -Message 'Metadata serialization failed' -Exception $_.Exception
             }
         }
         $mapped.Add($record)
@@ -138,9 +162,9 @@ function Send-DJMLogBuffer {
         }
         catch {
             Write-Warning "Send-DJMLogBuffer: batch POST failed: $_"
-            # Remove only the entries that were successfully sent
+            Add-DJMInternalError -Source 'Send-DJMLogBuffer' -Message "Batch POST failed: $($_.Exception.Message)" -Exception $_.Exception
             if ($totalSent -gt 0) {
-                $script:LogBuffer.RemoveRange(0, $totalSent)
+                Remove-DJMSentEntries -Snapshot $snapshot -Count $totalSent
             }
             $script:FlushFailureCount++
             if ($script:FlushFailureCount -ge $script:MaxFlushRetries) {
@@ -151,8 +175,11 @@ function Send-DJMLogBuffer {
         }
     }
 
-    # All batches succeeded — remove all sent entries, reset circuit breaker
-    $script:LogBuffer.RemoveRange(0, $totalSent)
+    # All batches succeeded — remove sent entries from the live buffer by reference,
+    # not by index. A concurrent Write-DJMLog at MaxBufferSize may have evicted the
+    # head entry during the HTTP POST, so the snapshot's [0..totalSent-1] slice is
+    # no longer guaranteed to align with the live buffer's [0..totalSent-1].
+    Remove-DJMSentEntries -Snapshot $snapshot -Count $totalSent
     $script:FlushFailureCount  = 0
     $script:AutoFlushDisabled  = $false
     Write-Verbose "Send-DJMLogBuffer: successfully sent $totalSent entries."

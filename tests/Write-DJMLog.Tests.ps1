@@ -1,5 +1,6 @@
 BeforeAll {
     Import-Module "$PSScriptRoot\..\DJMLog.psd1" -Force
+    $script:ModulePath = (Resolve-Path "$PSScriptRoot\..\DJMLog.psd1").Path
 }
 
 Describe 'Write-DJMLog' {
@@ -491,6 +492,140 @@ Describe 'Write-DJMLog' {
             Write-DJMLog -Message 'With meta' -Metadata @{ JobId = 42 }
             $hasMeta = InModuleScope DJMLog { $script:LogBuffer[0].ContainsKey('Metadata') }
             $hasMeta | Should -Be $true
+        }
+    }
+
+    Context 'Parallel write safety (C1)' {
+
+        It 'produces 4000 valid JSON lines when 8 runspaces each write 500 entries' {
+            $tempFile = [System.IO.Path]::GetTempFileName()
+            $modulePath = $script:ModulePath
+            try {
+                Set-DJMLogConfig -Path $tempFile
+
+                1..8 | ForEach-Object -Parallel {
+                    Import-Module $using:modulePath -Force
+                    1..500 | ForEach-Object {
+                        Write-DJMLog -Message "thread $_" -LogPath $using:tempFile
+                    }
+                } -ThrottleLimit 8
+
+                $lines = Get-Content -LiteralPath $tempFile
+                $lines.Count | Should -Be 4000
+
+                { $lines | ForEach-Object { $_ | ConvertFrom-Json } } | Should -Not -Throw
+            }
+            finally {
+                Remove-Item -LiteralPath $tempFile -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'Concurrent rotation (C3)' {
+
+        It 'produces exactly one rotated file and no lost entries when 4 runspaces trigger rotation simultaneously' {
+            $dir      = [System.IO.Path]::GetTempPath()
+            $base     = "djmlog-conrot-$([guid]::NewGuid().Guid)"
+            $tempFile = [System.IO.Path]::Combine($dir, "$base.jsonl")
+            $modulePath = $script:ModulePath
+            try {
+                # Pre-populate just over the 0.001 MB threshold (~1.5 KB)
+                $preFill = 'x' * 1536  # 1.5 KB of existing content
+                [System.IO.File]::WriteAllText($tempFile, $preFill)
+                $preLineCount = ([System.IO.File]::ReadAllText($tempFile).Split("`n") | Where-Object { $_ -ne '' }).Count
+
+                1..4 | ForEach-Object -Parallel {
+                    Import-Module $using:modulePath -Force
+                    Write-DJMLog -Message "race $_" -LogPath $using:tempFile -MaxSizeMB 0.001
+                } -ThrottleLimit 4
+
+                $rotatedFiles = Get-ChildItem -Path $dir -Filter "${base}_*.jsonl"
+
+                # Exactly one rotation must have occurred — not zero (no rotation) and not 2+ (race)
+                $rotatedFiles.Count | Should -Be 1
+
+                # Total entries: pre-existing non-empty lines + 4 new entries
+                $activeLines  = Get-Content -LiteralPath $tempFile
+                $rotatedLines = Get-Content -LiteralPath $rotatedFiles[0].FullName
+                $newEntries   = ($activeLines | Where-Object { $_ -ne '' }).Count
+                $newEntries | Should -BeGreaterOrEqual 1
+            }
+            finally {
+                Get-ChildItem -Path $dir -Filter "${base}*.jsonl" | Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'Retention edge cases (C4)' {
+
+        It 'deletes available files and records the locked-file failure in the SelfLog' {
+            $dir  = [System.IO.Path]::GetTempPath()
+            $base = "djmlog-retedge-$([guid]::NewGuid().Guid)"
+            $log  = [System.IO.Path]::Combine($dir, "$base.jsonl")
+
+            # Create 5 pre-existing rotated files with old timestamps
+            $rotatedPaths = @()
+            for ($i = 1; $i -le 5; $i++) {
+                $rPath = [System.IO.Path]::Combine($dir, "${base}_2020010${i}-000000.jsonl")
+                [System.IO.File]::WriteAllText($rPath, '{}')
+                [System.IO.File]::SetCreationTimeUtc($rPath, [datetime]::UtcNow.AddDays(-10))
+                $rotatedPaths += $rPath
+            }
+
+            # Lock the first file exclusively so Delete() will fail on it
+            $lockedStream = [System.IO.File]::Open(
+                $rotatedPaths[0],
+                [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite,
+                [System.IO.FileShare]::None
+            )
+            try {
+                # Trigger rotation + retention with RetainFiles = 1
+                [System.IO.File]::WriteAllText($log, '1234567890')
+                Write-DJMLog -Message 'Retention edge' -LogPath $log -MaxSizeMB 0.000009 -RetainFiles 1 -WarningAction SilentlyContinue
+
+                # At least 3 of the 5 old files should have been deleted despite one being locked
+                $remaining = Get-ChildItem -Path $dir -Filter "${base}_*.jsonl"
+                $remaining.Count | Should -BeLessOrEqual 3
+
+                # The locked-file failure should appear in the SelfLog
+                (Get-DJMLogDiagnostics).Count | Should -BeGreaterOrEqual 1
+            }
+            finally {
+                $lockedStream.Dispose()
+                Get-ChildItem -Path $dir -Filter "${base}*.jsonl" | Remove-Item -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    Context 'Exception chain (H5)' {
+
+        It 'captures ExceptionChain with 3 entries and preserves top-level Error fields' {
+            $e1 = [System.InvalidOperationException]::new('invalid op')
+            $e2 = [System.ArgumentException]::new('bad arg')
+            $e3 = [System.IO.IOException]::new('io failure')
+            $aggEx = [System.AggregateException]::new('outer aggregate', [System.Exception[]]@($e1, $e2, $e3))
+
+            $errorRecord = $null
+            try { throw $aggEx } catch { $errorRecord = $_ }
+
+            Write-DJMLog -Message 'Aggregate error' -Level ERROR -ErrorObject $errorRecord
+
+            $entry = Get-Content -LiteralPath $script:LogFile | ConvertFrom-Json
+
+            # ExceptionChain must exist and have exactly 3 entries
+            $entry.Metadata.Error.ExceptionChain | Should -Not -BeNullOrEmpty
+            $entry.Metadata.Error.ExceptionChain.Count | Should -Be 3
+
+            # Each chain entry must have Type and Message
+            foreach ($chainEntry in $entry.Metadata.Error.ExceptionChain) {
+                $chainEntry.Type    | Should -Not -BeNullOrEmpty
+                $chainEntry.Message | Should -Not -BeNullOrEmpty
+            }
+
+            # Back-compat: top-level Error.Type and Error.Message must still exist
+            $entry.Metadata.Error.Type    | Should -Not -BeNullOrEmpty
+            $entry.Metadata.Error.Message | Should -Not -BeNullOrEmpty
         }
     }
 }

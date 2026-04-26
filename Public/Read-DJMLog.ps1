@@ -136,6 +136,8 @@ function Read-DJMLog {
     Read-DJMLog -Level ERROR -Raw | Set-Content -LiteralPath C:\export\errors.jsonl
     #>
     [CmdletBinding()]
+    [OutputType([pscustomobject[]])]
+    [OutputType([string[]])]
     param (
         [string]$LogPath,
 
