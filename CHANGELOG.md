@@ -18,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `ConvertTo-DJMOrderedPSObject` — convert dictionary to PSCustomObject preserving key order
 - Named OS mutex (`DJMLog_WriteAccess`) for parallel write safety across runspaces
 - MinLevel filtering with level hierarchy (DEBUG < INFO < WARN < ERROR)
-- Time-based log rotation (Daily/Weekly/Monthly) alongside size-based rotation
+- Time-based log rotation (`Daily` / `Hourly`) alongside size-based rotation
 - Retention policies (`RetainDays` / `RetainFiles`) for automatic rotated log cleanup
 - Caller auto-capture (script name and line number in each log entry, enabled by default)
 - Azure Log Analytics integration via DCR-based Logs Ingestion API with circuit breaker

@@ -9,6 +9,17 @@
 TestResults.xml
 CoverageResults.xml
 
+# Local debug / scratch logs (Phase 3 stress + smoke runs)
+test*.log
+build.log
+stress*.log
+single-stress.log
+stress-runs/
+
+# Local stress runner script
+.stress20-v2.ps1
+.pr-body.md
+
 # Windows Explorer artefacts
 Thumbs.db
 desktop.ini

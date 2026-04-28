@@ -162,6 +162,33 @@ function Set-DJMLogConfig {
     Number of consecutive flush failures before the auto-flush circuit breaker
     trips. Use Send-DJMLogBuffer -Force to override. Defaults to 3.
 
+    .PARAMETER ChannelCapacity
+    Bounded capacity of the async writer channel (v2.0). When the channel is at
+    capacity, the oldest entry is dropped (FullMode=DropOldest). The drop is
+    surfaced via Get-DJMLogDiagnostics.DroppedCount. Defaults to 10000.
+
+    .PARAMETER Sinks
+    Array of enabled sinks. Any combination of 'File', 'Console', 'EventLog',
+    'LogAnalytics'. Defaults to @('File').
+
+    .PARAMETER RedactionPatterns
+    Array of regex patterns. Each match in any string metadata value is replaced
+    with '[REDACTED]'. Always-on rules (SecureString, PSCredential, sensitive
+    key names) apply regardless.
+
+    .PARAMETER RedactionPresets
+    Array of built-in redaction presets: 'Email', 'BearerToken', 'CreditCard'.
+
+    .PARAMETER SampleRate
+    Hashtable @{ <Level> = <0..1 rate> } applied after MinLevel filtering. A
+    rate of 0.0 drops all entries at that level; 1.0 keeps all (the default
+    when omitted).
+
+    .PARAMETER IncludeHostContext
+    When $true (the default), v2.0 entries include a Host enrichment block
+    ({ MachineName, ProcessId, UserName, PSVersion }). Set to $false to
+    suppress globally.
+
     .PARAMETER ConfigPath
     Path to a JSON config file. All parameters above are supported as
     properties. Explicit parameters on the same call override values from
@@ -270,6 +297,21 @@ function Set-DJMLogConfig {
 
         [ValidateRange(1, [int]::MaxValue)]
         [int]$MaxFlushRetries,
+
+        [ValidateRange(64, 1000000)]
+        [int]$ChannelCapacity,
+
+        [ValidateSet('File', 'Console', 'EventLog', 'LogAnalytics')]
+        [string[]]$Sinks,
+
+        [string[]]$RedactionPatterns,
+
+        [ValidateSet('Email', 'BearerToken', 'CreditCard')]
+        [string[]]$RedactionPresets,
+
+        [hashtable]$SampleRate,
+
+        [bool]$IncludeHostContext,
 
         [string]$ConfigPath
     )
@@ -483,12 +525,28 @@ function Set-DJMLogConfig {
         $laParamTouched = $true
     }
 
+    # v2.0 — async writer + sinks + redaction + sampling + host context
+    if ($PSBoundParameters.ContainsKey('ChannelCapacity'))   { $script:ChannelCapacity   = $ChannelCapacity }
+    if ($PSBoundParameters.ContainsKey('Sinks'))             { $script:Sinks             = $Sinks }
+    if ($PSBoundParameters.ContainsKey('RedactionPatterns')) { $script:RedactionPatterns = $RedactionPatterns }
+    if ($PSBoundParameters.ContainsKey('RedactionPresets'))  { $script:RedactionPresets  = $RedactionPresets }
+    if ($PSBoundParameters.ContainsKey('SampleRate'))        {
+        # Normalise level keys to uppercase
+        $normalised = @{}
+        foreach ($k in $SampleRate.Keys) { $normalised[[string]$k.ToString().ToUpperInvariant()] = [double]$SampleRate[$k] }
+        $script:SampleRate = $normalised
+    }
+    if ($PSBoundParameters.ContainsKey('IncludeHostContext')) { $script:DefaultIncludeHostContext = $IncludeHostContext }
+
     # Reset circuit breaker when any LA param is changed
     if ($laParamTouched) {
         $script:FlushFailureCount    = 0
         $script:AutoFlushDisabled    = $false
         $script:AutoFlushOpenedAtUtc = $null
     }
+
+    # Sync writer-visible state. Safe to call when the writer hasn't started yet.
+    try { Update-DJMWriterShared } catch { $null = $_ }
 
     # M5 — DcrEndpointUri host should match CloudEnvironment domain. Emit a
     # warning (not an error) so sovereign-cloud edge cases can still proceed.
