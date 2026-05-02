@@ -74,7 +74,7 @@ function New-DJMJwtAssertion {
     # GetRSAPrivateKey is an extension method on X509Certificate2 in modern .NET;
     # PowerShell's instance-method resolution doesn't pick it up reliably (varies
     # by host / .NET version), so call the static form on RSACertificateExtensions
-    # explicitly. Same call pattern works on PS 7.4 + 7.5 across Windows/Linux.
+    # explicitly. Required on PS 7.6 (and held over from earlier hosts).
     $rsaKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($Certificate)
     if (-not $rsaKey) {
         throw "New-DJMJwtAssertion: certificate '$($Certificate.Thumbprint)' has no usable RSA private key."
