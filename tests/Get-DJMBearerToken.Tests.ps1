@@ -15,6 +15,8 @@ Describe 'Get-DJMBearerToken' {
             $script:CertificateSubject  = $null
             $script:CertificateThumbprint = $null
             $script:CloudEnvironment    = 'GCCHigh'
+            $script:UseManagedIdentity  = $false
+            $script:ManagedIdentityClientId = $null
         }
     }
 
@@ -304,6 +306,114 @@ Describe 'Get-DJMBearerToken' {
 
             $result = InModuleScope DJMLog { Get-DJMBearerToken } -WarningAction SilentlyContinue
             $result | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'Managed identity (ADR-029)' {
+
+        BeforeEach {
+            InModuleScope DJMLog {
+                $script:UseManagedIdentity      = $true
+                $script:ManagedIdentityClientId = $null
+                # MI bypasses TenantId/AppId; clear them so any accidental
+                # fall-through into the cert/secret branches surfaces.
+                $script:TenantId                = $null
+                $script:AppId                   = $null
+                $script:AppSecret               = $null
+                $script:CertificateSubject      = $null
+                $script:CertificateThumbprint   = $null
+                $script:CloudEnvironment        = 'GCCHigh'
+            }
+        }
+
+        It 'returns IMDS token when UseManagedIdentity is set' {
+            Mock Get-DJMManagedIdentityToken -ModuleName DJMLog {
+                @{ access_token = 'mi-token'; expires_in = 3600 }
+            }
+            $result = InModuleScope DJMLog { Get-DJMBearerToken }
+            $result | Should -Be 'mi-token'
+            InModuleScope DJMLog { $script:BearerToken } | Should -Be 'mi-token'
+        }
+
+        It 'forwards ManagedIdentityClientId to Get-DJMManagedIdentityToken' {
+            InModuleScope DJMLog { $script:ManagedIdentityClientId = 'user-mi-client-id' }
+            Mock Get-DJMManagedIdentityToken -ModuleName DJMLog -ParameterFilter {
+                $ClientId -eq 'user-mi-client-id'
+            } -MockWith {
+                @{ access_token = 'user-mi-token'; expires_in = 3600 }
+            }
+            $result = InModuleScope DJMLog { Get-DJMBearerToken }
+            $result | Should -Be 'user-mi-token'
+            Should -Invoke Get-DJMManagedIdentityToken -ModuleName DJMLog -Times 1 -Exactly -ParameterFilter {
+                $ClientId -eq 'user-mi-client-id'
+            }
+        }
+
+        It 'omits ClientId when ManagedIdentityClientId is unset (system-assigned MI)' {
+            Mock Get-DJMManagedIdentityToken -ModuleName DJMLog -ParameterFilter {
+                -not $PSBoundParameters.ContainsKey('ClientId')
+            } -MockWith {
+                @{ access_token = 'sys-mi-token'; expires_in = 3600 }
+            }
+            $result = InModuleScope DJMLog { Get-DJMBearerToken }
+            $result | Should -Be 'sys-mi-token'
+        }
+
+        It 'maps GCCHigh to monitor.azure.us resource' {
+            InModuleScope DJMLog { $script:CloudEnvironment = 'GCCHigh' }
+            Mock Get-DJMManagedIdentityToken -ModuleName DJMLog -ParameterFilter {
+                $Resource -eq 'https://monitor.azure.us'
+            } -MockWith {
+                @{ access_token = 'gcc-mi-token'; expires_in = 3600 }
+            }
+            $result = InModuleScope DJMLog { Get-DJMBearerToken }
+            $result | Should -Be 'gcc-mi-token'
+        }
+
+        It 'maps Commercial to monitor.azure.com resource' {
+            InModuleScope DJMLog { $script:CloudEnvironment = 'Commercial' }
+            Mock Get-DJMManagedIdentityToken -ModuleName DJMLog -ParameterFilter {
+                $Resource -eq 'https://monitor.azure.com'
+            } -MockWith {
+                @{ access_token = 'comm-mi-token'; expires_in = 3600 }
+            }
+            $result = InModuleScope DJMLog { Get-DJMBearerToken }
+            $result | Should -Be 'comm-mi-token'
+        }
+
+        It 'caches MI token until expiry' {
+            Mock Get-DJMManagedIdentityToken -ModuleName DJMLog {
+                @{ access_token = 'cached-mi'; expires_in = 3600 }
+            }
+            $first  = InModuleScope DJMLog { Get-DJMBearerToken }
+            $second = InModuleScope DJMLog { Get-DJMBearerToken }
+            $first  | Should -Be 'cached-mi'
+            $second | Should -Be 'cached-mi'
+            Should -Invoke Get-DJMManagedIdentityToken -ModuleName DJMLog -Times 1 -Exactly
+        }
+
+        It 'returns $null when IMDS response is missing access_token' {
+            Mock Get-DJMManagedIdentityToken -ModuleName DJMLog {
+                @{ expires_in = 3600 }
+            }
+            $result = InModuleScope DJMLog { Get-DJMBearerToken } -WarningAction SilentlyContinue
+            $result | Should -BeNullOrEmpty
+        }
+
+        It 'returns $null when Get-DJMManagedIdentityToken throws' {
+            Mock Get-DJMManagedIdentityToken -ModuleName DJMLog { throw 'IMDS unreachable' }
+            $result = InModuleScope DJMLog { Get-DJMBearerToken } -WarningAction SilentlyContinue
+            $result | Should -BeNullOrEmpty
+        }
+
+        It 'prefers external bearer over MI when both are configured' {
+            InModuleScope DJMLog { $script:BearerTokenExternal = 'ext-wins' }
+            Mock Get-DJMManagedIdentityToken -ModuleName DJMLog {
+                @{ access_token = 'mi-loses'; expires_in = 3600 }
+            }
+            $result = InModuleScope DJMLog { Get-DJMBearerToken }
+            $result | Should -Be 'ext-wins'
+            Should -Invoke Get-DJMManagedIdentityToken -ModuleName DJMLog -Times 0
         }
     }
 

@@ -9,10 +9,11 @@ function Get-DJMBearerToken {
     configured authentication method.
 
     Auth priority:
-      1. BearerTokenExternal  - user-supplied token, returned as-is
-      2. CertificateThumbprint - load cert by thumbprint, JWT assertion flow
-      3. CertificateSubject    - find best cert by subject, JWT assertion flow
-      4. AppSecret             - client_credentials with client_secret
+      1. BearerTokenExternal   - user-supplied token, returned as-is
+      2. UseManagedIdentity    - IMDS-acquired token (system- or user-assigned MI)
+      3. CertificateThumbprint - load cert by thumbprint, JWT assertion flow
+      4. CertificateSubject    - find best cert by subject, JWT assertion flow
+      5. AppSecret             - client_credentials with client_secret (deprecated)
 
     Cloud-aware endpoints:
       Commercial: login.microsoftonline.com / https://monitor.azure.com//.default
@@ -37,9 +38,47 @@ function Get-DJMBearerToken {
         return
     }
 
-    # Require TenantId + AppId for all OAuth2 flows
+    # 3. Managed identity via IMDS — bypasses TenantId/AppId entirely. The IMDS
+    # endpoint (169.254.169.254) is link-local; the host's assigned identity
+    # supplies tenant + app implicitly. ADR-029.
+    if ($script:UseManagedIdentity) {
+        $miResourceMap = @{
+            Commercial = 'https://monitor.azure.com'
+            GCCHigh    = 'https://monitor.azure.us'
+            DoD        = 'https://monitor.azure.us'
+        }
+        $miResource = $miResourceMap[$script:CloudEnvironment]
+        if (-not $miResource) {
+            Write-Warning "Get-DJMBearerToken: unknown CloudEnvironment '$($script:CloudEnvironment)' for managed-identity resource lookup."
+            Add-DJMInternalError -Source 'Get-DJMBearerToken' -Message "Unknown CloudEnvironment '$($script:CloudEnvironment)' for managed-identity resource lookup"
+            return
+        }
+        try {
+            $miParams = @{ Resource = $miResource }
+            if (-not [string]::IsNullOrEmpty($script:ManagedIdentityClientId)) {
+                $miParams['ClientId'] = $script:ManagedIdentityClientId
+            }
+            $miResponse = Get-DJMManagedIdentityToken @miParams
+            if (-not $miResponse.access_token -or -not $miResponse.expires_in) {
+                Write-Warning 'Get-DJMBearerToken: managed-identity endpoint returned an incomplete response (missing access_token or expires_in).'
+                Add-DJMInternalError -Source 'Get-DJMBearerToken' -Message 'Managed-identity endpoint returned incomplete response'
+                return
+            }
+            $script:BearerToken = $miResponse.access_token
+            $script:TokenExpiry = [datetime]::UtcNow.AddSeconds([int]$miResponse.expires_in - 300)
+            $script:BearerToken
+            return
+        }
+        catch {
+            Write-Warning "Get-DJMBearerToken: managed-identity acquisition failed: $($_.Exception.Message)"
+            Add-DJMInternalError -Source 'Get-DJMBearerToken' -Message 'Managed-identity token acquisition failed' -Exception $_.Exception
+            return
+        }
+    }
+
+    # Require TenantId + AppId for the remaining OAuth2 flows
     if (-not $script:TenantId -or -not $script:AppId) {
-        Write-Warning 'Get-DJMBearerToken: TenantId and AppId are required for token acquisition. Use Set-DJMLogConfig or supply -BearerToken.'
+        Write-Warning 'Get-DJMBearerToken: TenantId and AppId are required for token acquisition. Use Set-DJMLogConfig or supply -BearerToken / -UseManagedIdentity.'
         return
     }
 
@@ -131,7 +170,7 @@ function Get-DJMBearerToken {
         }
     }
     else {
-        Write-Warning 'Get-DJMBearerToken: no authentication method configured. Supply BearerToken, CertificateThumbprint, CertificateSubject, or AppSecret via Set-DJMLogConfig.'
+        Write-Warning 'Get-DJMBearerToken: no authentication method configured. Supply BearerToken, UseManagedIdentity, CertificateThumbprint, CertificateSubject, or AppSecret via Set-DJMLogConfig.'
         return
     }
 

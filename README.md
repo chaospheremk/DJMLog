@@ -132,6 +132,8 @@ Each call to `Write-DJMLog` enqueues a single JSON line; the writer appends to t
 - **Schema v2 is emitted by default.** v1-only consumers continue to work because v2 is a strict superset, but parsers that match exact field sets need updating.
 - **`Send-DJMLogBuffer` no longer flushes in the caller's runspace.** It forwards to `Flush-DJMLog`. Tests that mocked `Invoke-RestMethod` in the main scope to assert flush behaviour need to migrate.
 - **Certificate-auth (JWT assertion) Log Analytics flush** runs in the writer runspace alongside `AppSecret` and `BearerTokenExternal`. The cert is resolved in the main runspace at `Set-DJMLogConfig` time and the resolved `X509Certificate2` is marshalled into the writer; JWT signing happens inside the writer (ADR-027).
+- **Managed identity (IMDS)** is the recommended replacement for the deprecated string `AppSecret`. Pass `-UseManagedIdentity` to `Set-DJMLogConfig` (system-assigned MI) or add `-ManagedIdentityClientId <guid>` for a user-assigned MI. The MI must hold the `Monitoring Metrics Publisher` role on the DCR. ADR-029.
+- **String `AppSecret` is deprecated.** Set-DJMLogConfig still accepts a plain-string secret for back-compat but emits a deprecation warning. Pass `[SecureString]` or migrate to `-UseManagedIdentity`.
 - **`Get-DJMLogDiagnostics` adds fields**: `EnqueuedCount` / `ProcessedCount` / `DroppedCount` / `QueuedCount`. Existing consumers reading `Errors` / `CircuitBreakerState` / `AutoFlushOpenedAtUtc` continue to work.
 
 ## Requirements

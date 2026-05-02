@@ -6,15 +6,17 @@ BeforeAll {
     # but we can extract the source and rebuild the function in the test's
     # session so we can exercise its logic against a mocked Invoke-DJMRestMethodWithRetry.
     # The injection mechanism is the same one Start-DJMWriter uses for the real writer.
-    $writerSrc   = Get-Content "$PSScriptRoot\..\Private\Start-DJMWriter.ps1" -Raw
+    $writerSrc    = Get-Content "$PSScriptRoot\..\Private\Start-DJMWriter.ps1" -Raw
     $jwtHelperSrc = Get-Content "$PSScriptRoot\..\Private\New-DJMJwtAssertion.ps1" -Raw
-    $retrySrc    = Get-Content "$PSScriptRoot\..\Private\Invoke-DJMRestMethodWithRetry.ps1" -Raw
+    $retrySrc     = Get-Content "$PSScriptRoot\..\Private\Invoke-DJMRestMethodWithRetry.ps1" -Raw
+    $miSrc        = Get-Content "$PSScriptRoot\..\Private\Get-DJMManagedIdentityToken.ps1" -Raw
 
     # Pull the writer scriptblock body — between the start and end markers the
     # writer source contains the inline functions we need (Get-LAToken,
     # Add-WriterErr, Get-EntryByteCount). Source the helpers into the test scope.
     Invoke-Expression $jwtHelperSrc
     Invoke-Expression $retrySrc
+    Invoke-Expression $miSrc
 
     # Build a self-signed RSA cert for the JWT cert-auth path.
     $req = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new(
@@ -31,8 +33,10 @@ Describe 'Update-DJMWriterShared certificate marshalling' {
 
     BeforeEach {
         InModuleScope DJMLog {
-            $script:CertificateThumbprint = $null
-            $script:CertificateSubject    = $null
+            $script:CertificateThumbprint   = $null
+            $script:CertificateSubject      = $null
+            $script:UseManagedIdentity      = $false
+            $script:ManagedIdentityClientId = $null
         }
     }
 
@@ -69,6 +73,31 @@ Describe 'Update-DJMWriterShared certificate marshalling' {
             $script:WriterShared.Certificate | Should -BeNullOrEmpty
         }
     }
+
+    It 'marshals UseManagedIdentity into WriterShared (ADR-029)' {
+        InModuleScope DJMLog {
+            $script:UseManagedIdentity = $true
+            Update-DJMWriterShared
+            $script:WriterShared.UseManagedIdentity | Should -BeTrue
+        }
+    }
+
+    It 'marshals ManagedIdentityClientId into WriterShared' {
+        InModuleScope DJMLog {
+            $script:UseManagedIdentity      = $true
+            $script:ManagedIdentityClientId = 'mi-client-id'
+            Update-DJMWriterShared
+            $script:WriterShared.ManagedIdentityClientId | Should -Be 'mi-client-id'
+        }
+    }
+
+    It 'sets UseManagedIdentity to $false when not configured' {
+        InModuleScope DJMLog {
+            $script:UseManagedIdentity = $false
+            Update-DJMWriterShared
+            $script:WriterShared.UseManagedIdentity | Should -BeFalse
+        }
+    }
 }
 
 Describe 'Writer-side Get-LAToken auth selection' {
@@ -100,6 +129,34 @@ Describe 'Writer-side Get-LAToken auth selection' {
             if ($Shared.BearerTokenCache -and [datetime]::UtcNow -lt $Shared.BearerTokenExpiry) {
                 return $Shared.BearerTokenCache
             }
+
+            # Managed identity (ADR-029) — IMDS, no TenantId/AppId required.
+            if ($Shared.UseManagedIdentity) {
+                $miResourceMap = @{
+                    Commercial = 'https://monitor.azure.com'
+                    GCCHigh    = 'https://monitor.azure.us'
+                    DoD        = 'https://monitor.azure.us'
+                }
+                $miResource = $miResourceMap[$Shared.CloudEnvironment]
+                if (-not $miResource) {
+                    Add-WriterErr -Source 'LogAnalyticsSink' -Message "Unknown CloudEnvironment '$($Shared.CloudEnvironment)' for managed-identity"
+                    return $null
+                }
+                try {
+                    $miParams = @{ Resource = $miResource }
+                    if (-not [string]::IsNullOrEmpty($Shared.ManagedIdentityClientId)) {
+                        $miParams['ClientId'] = $Shared.ManagedIdentityClientId
+                    }
+                    $miResp = Get-DJMManagedIdentityToken @miParams
+                    if (-not $miResp.access_token -or -not $miResp.expires_in) { return $null }
+                    return $miResp.access_token
+                }
+                catch {
+                    Add-WriterErr -Source 'LogAnalyticsSink' -Message "Managed-identity token acquisition failed: $($_.Exception.Message)" -Exception $_.Exception
+                    return $null
+                }
+            }
+
             if (-not $Shared.TenantId -or -not $Shared.AppId) {
                 Add-WriterErr -Source 'LogAnalyticsSink' -Message 'TenantId/AppId missing'
                 return $null
@@ -212,6 +269,112 @@ Describe 'Writer-side Get-LAToken auth selection' {
         }
         $token = Make-WriterToken -Shared $shared
         $token | Should -BeNullOrEmpty
+    }
+
+    It 'uses managed identity when Shared.UseManagedIdentity is set (ADR-029)' {
+        Mock Get-DJMManagedIdentityToken -MockWith {
+            @{ access_token = 'mi-token'; expires_in = 3600 }
+        }
+        $shared = @{
+            Errors             = [System.Collections.Concurrent.ConcurrentQueue[pscustomobject]]::new()
+            BearerTokenExternal = $null
+            BearerTokenCache   = $null
+            BearerTokenExpiry  = [datetime]::MinValue
+            TenantId           = $null
+            AppId              = $null
+            CloudEnvironment   = 'GCCHigh'
+            Certificate        = $null
+            AppSecret          = $null
+            UseManagedIdentity = $true
+            ManagedIdentityClientId = $null
+        }
+        $token = Make-WriterToken -Shared $shared
+        $token | Should -Be 'mi-token'
+        Should -Invoke Get-DJMManagedIdentityToken -Times 1 -Exactly
+    }
+
+    It 'forwards Shared.ManagedIdentityClientId to Get-DJMManagedIdentityToken' {
+        Mock Get-DJMManagedIdentityToken -ParameterFilter {
+            $ClientId -eq 'user-mi-client-id'
+        } -MockWith {
+            @{ access_token = 'user-mi-token'; expires_in = 3600 }
+        }
+        $shared = @{
+            Errors             = [System.Collections.Concurrent.ConcurrentQueue[pscustomobject]]::new()
+            BearerTokenExternal = $null
+            BearerTokenCache   = $null
+            BearerTokenExpiry  = [datetime]::MinValue
+            TenantId           = $null
+            AppId              = $null
+            CloudEnvironment   = 'GCCHigh'
+            Certificate        = $null
+            AppSecret          = $null
+            UseManagedIdentity = $true
+            ManagedIdentityClientId = 'user-mi-client-id'
+        }
+        $token = Make-WriterToken -Shared $shared
+        $token | Should -Be 'user-mi-token'
+    }
+
+    It 'maps GCCHigh CloudEnvironment to monitor.azure.us for MI' {
+        Mock Get-DJMManagedIdentityToken -ParameterFilter {
+            $Resource -eq 'https://monitor.azure.us'
+        } -MockWith {
+            @{ access_token = 'gcc-mi-token'; expires_in = 3600 }
+        }
+        $shared = @{
+            Errors             = [System.Collections.Concurrent.ConcurrentQueue[pscustomobject]]::new()
+            BearerTokenExternal = $null
+            BearerTokenCache   = $null
+            BearerTokenExpiry  = [datetime]::MinValue
+            CloudEnvironment   = 'GCCHigh'
+            Certificate        = $null
+            AppSecret          = $null
+            UseManagedIdentity = $true
+            ManagedIdentityClientId = $null
+        }
+        $token = Make-WriterToken -Shared $shared
+        $token | Should -Be 'gcc-mi-token'
+    }
+
+    It 'queues a SelfLog entry when MI token acquisition throws' {
+        Mock Get-DJMManagedIdentityToken -MockWith { throw 'IMDS unreachable' }
+        $shared = @{
+            Errors             = [System.Collections.Concurrent.ConcurrentQueue[pscustomobject]]::new()
+            BearerTokenExternal = $null
+            BearerTokenCache   = $null
+            BearerTokenExpiry  = [datetime]::MinValue
+            CloudEnvironment   = 'GCCHigh'
+            Certificate        = $null
+            AppSecret          = $null
+            UseManagedIdentity = $true
+            ManagedIdentityClientId = $null
+        }
+        $token = Make-WriterToken -Shared $shared
+        $token | Should -BeNullOrEmpty
+        $shared.Errors.Count | Should -BeGreaterThan 0
+        $msg = $null
+        $shared.Errors.TryDequeue([ref]$msg) | Out-Null
+        $msg.Source | Should -Be 'LogAnalyticsSink'
+        $msg.Message | Should -BeLike 'Managed-identity token acquisition failed*'
+    }
+
+    It 'prefers external bearer over MI when both are configured' {
+        Mock Get-DJMManagedIdentityToken -MockWith {
+            @{ access_token = 'mi-loses'; expires_in = 3600 }
+        }
+        $shared = @{
+            Errors             = [System.Collections.Concurrent.ConcurrentQueue[pscustomobject]]::new()
+            BearerTokenExternal = 'ext-wins'
+            BearerTokenCache   = $null
+            BearerTokenExpiry  = [datetime]::MinValue
+            CloudEnvironment   = 'GCCHigh'
+            UseManagedIdentity = $true
+            ManagedIdentityClientId = $null
+        }
+        $token = Make-WriterToken -Shared $shared
+        $token | Should -Be 'ext-wins'
+        Should -Invoke Get-DJMManagedIdentityToken -Times 0
     }
 
     It 'queues a SelfLog entry when JWT assertion build fails' {
