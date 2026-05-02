@@ -3,7 +3,7 @@
 [![CI](https://github.com/chaospheremk/DJMLog/actions/workflows/ci.yml/badge.svg)](https://github.com/chaospheremk/DJMLog/actions/workflows/ci.yml)
 [![Docs](https://github.com/chaospheremk/DJMLog/actions/workflows/docs.yml/badge.svg)](https://github.com/chaospheremk/DJMLog/actions/workflows/docs.yml)
 
-A PowerShell 7.6+ module for asynchronous structured JSONL logging in automation scripts.
+A PowerShell 7.5+ module for asynchronous structured JSONL logging in automation scripts.
 
 DJMLog v2.0 ships an async writer architecture: `Write-DJMLog` validates → enriches → redacts → enqueues onto a bounded `System.Threading.Channels.Channel`, and a dedicated writer runspace fans entries out across the enabled sinks (File / Console / EventLog / LogAnalytics). The producer-side hot path is ~10 µs regardless of file rotation cost or Log Analytics flush activity.
 
@@ -136,5 +136,5 @@ Each call to `Write-DJMLog` enqueues a single JSON line; the writer appends to t
 
 ## Requirements
 
-- PowerShell 7.6 or later
+- PowerShell 7.5 or later (validated against 7.5 in CI; runs on 7.6)
 - Azure Log Analytics integration requires an Entra ID app registration with appropriate permissions on a Data Collection Rule (DCR)

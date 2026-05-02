@@ -78,7 +78,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pwsh: ['7.6']
+        pwsh: ['7.5']
     container:
       image: mcr.microsoft.com/powershell:${{ matrix.pwsh }}-ubuntu-22.04
     permissions:
