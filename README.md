@@ -106,7 +106,7 @@ Each call to `Write-DJMLog` enqueues a single JSON line; the writer appends to t
         "MachineName": "WORKER-01",
         "ProcessId": 1234,
         "UserName": "svc-automation",
-        "PSVersion": "7.5.0"
+        "PSVersion": "7.6.0"
     },
     "Metadata": {
         "UserPrincipalName": "jsmith@contoso.com",
@@ -131,10 +131,10 @@ Each call to `Write-DJMLog` enqueues a single JSON line; the writer appends to t
 - **Write-DJMLog is now asynchronous.** Scripts that depended on synchronous on-disk durability must call `Flush-DJMLog` before reading the file. Test scenarios can opt back into synchronous semantics via `$env:DJMLOG_SYNC_WRITES = '1'`.
 - **Schema v2 is emitted by default.** v1-only consumers continue to work because v2 is a strict superset, but parsers that match exact field sets need updating.
 - **`Send-DJMLogBuffer` no longer flushes in the caller's runspace.** It forwards to `Flush-DJMLog`. Tests that mocked `Invoke-RestMethod` in the main scope to assert flush behaviour need to migrate.
-- **Certificate-auth (JWT assertion) Log Analytics flush** runs in the writer runspace for `AppSecret` + `BearerTokenExternal` only. Cert auth still flows through the main-runspace `Send-DJMLogBuffer -Force` path; full cert support inside the writer is a v2.x follow-up.
+- **Certificate-auth (JWT assertion) Log Analytics flush** runs in the writer runspace alongside `AppSecret` and `BearerTokenExternal`. The cert is resolved in the main runspace at `Set-DJMLogConfig` time and the resolved `X509Certificate2` is marshalled into the writer; JWT signing happens inside the writer (ADR-027).
 - **`Get-DJMLogDiagnostics` adds fields**: `EnqueuedCount` / `ProcessedCount` / `DroppedCount` / `QueuedCount`. Existing consumers reading `Errors` / `CircuitBreakerState` / `AutoFlushOpenedAtUtc` continue to work.
 
 ## Requirements
 
-- PowerShell 7.0 or later
+- PowerShell 7.0 or later (CI validates against 7.5; runs on 7.6)
 - Azure Log Analytics integration requires an Entra ID app registration with appropriate permissions on a Data Collection Rule (DCR)

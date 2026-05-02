@@ -71,10 +71,12 @@ function New-DJMJwtAssertion {
     $payloadB64  = & $toBase64Url $jwtPayload
     $unsignedJwt = "$headerB64.$payloadB64"
 
-    # GetRSAPrivateKey is an extension method on X509Certificate2 in modern .NET;
-    # PowerShell's instance-method resolution doesn't pick it up reliably (varies
-    # by host / .NET version), so call the static form on RSACertificateExtensions
-    # explicitly. Same call pattern works on PS 7.4 + 7.5 across Windows/Linux.
+    # GetRSAPrivateKey is an extension method on X509Certificate2 (defined on
+    # RSACertificateExtensions). PowerShell's instance-method resolution does not
+    # surface it on any PS host we have tested (7.5, 7.6) -- `$cert.GetRSAPrivateKey()`
+    # throws "does not contain a method named 'GetRSAPrivateKey'", and Get-Member
+    # does not list it either. Call the static form explicitly so the lookup is
+    # deterministic across hosts. Do not "simplify" this back to instance form.
     $rsaKey = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($Certificate)
     if (-not $rsaKey) {
         throw "New-DJMJwtAssertion: certificate '$($Certificate.Thumbprint)' has no usable RSA private key."
