@@ -8,14 +8,14 @@
     Each iteration spawns a fresh `pwsh -NoProfile -Command "Invoke-Build TestStress"`
     subprocess so module/runspace state cannot accumulate across runs.
 
-    The inner pwsh command is wrapped in `[System.Environment]::Exit($LASTEXITCODE)`
+    The inner pwsh command is wrapped via `scripts/Invoke-WithDJMHostExit.ps1`
     because the v2.0 async writer's runspace + Task.Run worker can keep the host
-    process alive after Invoke-Pester returns. Without the explicit Exit, the
-    subprocess hangs (~19 minutes in CI, indefinitely locally) and the next
-    iteration blocks on the `& pwsh ...` boundary — surfacing as the "47s -> 5+ min"
-    pattern observed during the v2.0 release window. The same wrapper is already
-    used by `.github/workflows/release.yml` (added in PR #48); this script
-    applies it for local stress drilling.
+    process alive after Invoke-Pester returns. Without the explicit
+    [System.Environment]::Exit the helper performs, the subprocess hangs
+    (~19 minutes in CI, indefinitely locally) and the next iteration blocks on
+    the `& pwsh ...` boundary — the "47s -> 5+ min" pattern observed during the
+    v2.0 release window. See ADR-030 / BUG-023 for the full rationale; the same
+    helper is used by ci.yml, docs.yml, and release.yml.
 
 .PARAMETER Iterations
     Number of consecutive runs (default 20).
@@ -42,7 +42,7 @@ for ($i = 1; $i -le $Iterations; $i++) {
 
     $beforeIds = (Get-Process pwsh -ErrorAction SilentlyContinue).Id
 
-    $cmd = "Set-Location '$repoRoot'; try { Invoke-Build TestStress; [System.Environment]::Exit(`$LASTEXITCODE) } catch { Write-Host `$_; [System.Environment]::Exit(1) }"
+    $cmd = "Set-Location '$repoRoot'; & './scripts/Invoke-WithDJMHostExit.ps1' -Script { Invoke-Build TestStress }"
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
     & pwsh -NoProfile -Command $cmd *> $logFile
     $exit = $LASTEXITCODE

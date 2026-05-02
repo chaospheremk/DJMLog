@@ -872,15 +872,9 @@ function Wait-DJMProcessed {
 
 # Stop the writer. Idempotent. Soft-stop: signal cancellation + channel
 # completion, then null out our $script: refs without joining the writer
-# thread. The writer's pipeline thread is marked IsBackground = $true at
-# Start-DJMWriter time, so even if it lingers in PowerShell's internal
-# pool after Dispose, it will not keep the process alive at host exit.
-#
-# A hard-stop variant (WaitOne + PowerShell.Stop + EndInvoke + Dispose) was
-# tried but observed to leak a foreground thread on Remove-Module +
-# Import-Module cycles (e.g. each Pester test file's BeforeAll), which kept
-# `pwsh -Command '...'` subprocesses alive ~19 min in CI. The soft-stop
-# avoids that path entirely.
+# thread. Non-interactive callers must wrap with scripts/Invoke-WithDJMHostExit.ps1
+# (see ADR-030 / ADR-026 / BUG-023) — that helper carries the full rationale
+# for why the soft-stop path is the only one we ship.
 function Stop-DJMWriter {
     [CmdletBinding()]
     [OutputType([void])]
