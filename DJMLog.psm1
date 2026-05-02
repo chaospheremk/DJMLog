@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Structured JSONL logging module for PowerShell 7.5+ (v2.0 — async writer + sinks).
+Structured JSONL logging module for PowerShell 7+ (v2.0 — async writer + sinks).
 
 .DESCRIPTION
 Module loader. Initialises shared state, dot-sources private helpers and public
@@ -12,7 +12,7 @@ Exports eleven functions:
   Get-DJMLogDiagnostics, ConvertTo-DJMDictionary, ConvertTo-DJMOrderedPSObject
 
 .NOTES
-Requires PowerShell 7.5 or later.
+Requires PowerShell 7 or later.
 #>
 
 # Module-level state — shared across all dot-sourced functions via $script: scope

@@ -1,6 +1,6 @@
 # DJMLog
 
-A PowerShell 7.5+ module for asynchronous structured JSONL logging in automation scripts.
+A PowerShell 7+ module for asynchronous structured JSONL logging in automation scripts.
 
 DJMLog v2.0 ships an async writer architecture: `Write-DJMLog` validates → enriches → redacts → enqueues onto a bounded `System.Threading.Channels.Channel`, and a dedicated writer runspace fans entries out across the enabled sinks (File / Console / EventLog / LogAnalytics). The producer-side hot path is ~10 µs regardless of file rotation cost or Log Analytics flush activity.
 
