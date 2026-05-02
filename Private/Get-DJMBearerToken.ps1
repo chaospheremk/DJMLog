@@ -60,106 +60,37 @@ function Get-DJMBearerToken {
 
     $body = $null
 
-    # 3. Certificate auth (thumbprint or subject)
-    # Both paths apply the same predicate: NotAfter > UtcNow, HasPrivateKey,
-    # key size >= 2048 bits. Whichever candidate has the latest NotAfter wins.
+    # 3. Certificate auth (thumbprint or subject) — resolution and JWT signing
+    # are factored out into Resolve-DJMCertificate / New-DJMJwtAssertion so the
+    # writer runspace can reuse the JWT builder against a pre-resolved cert
+    # marshalled in via $WriterShared.Certificate (per ADR-027).
     $cert = $null
     $minKeySize = 2048
 
-    $isUsableCert = {
-        param ($Candidate)
-        if (-not $Candidate) { return $false }
-        if (-not $Candidate.HasPrivateKey) { return $false }
-        if ($Candidate.NotAfter -le [datetime]::UtcNow) { return $false }
-        # Key size: PublicKey.Key.KeySize is the standard accessor on X509Certificate2.
-        $keySize = $null
-        try {
-            if ($Candidate.PublicKey -and $Candidate.PublicKey.Key) {
-                $keySize = $Candidate.PublicKey.Key.KeySize
-            }
-        }
-        catch { $keySize = $null }
-        if ($null -ne $keySize -and $keySize -lt $minKeySize) { return $false }
-        $true
-    }
-
     if ($script:CertificateThumbprint) {
-        $candidates = [System.Collections.Generic.List[object]]::new()
-        foreach ($storeLocation in @('LocalMachine', 'CurrentUser')) {
-            $storePath = "Cert:\$storeLocation\My\$($script:CertificateThumbprint)"
-            $found = Get-Item -LiteralPath $storePath -ErrorAction SilentlyContinue
-            if ($found -and (& $isUsableCert $found)) {
-                $candidates.Add($found)
-            }
-        }
-        if ($candidates.Count -eq 0) {
+        $cert = Resolve-DJMCertificate -Thumbprint $script:CertificateThumbprint -MinKeySize $minKeySize
+        if (-not $cert) {
             Write-Warning "Get-DJMBearerToken: no valid certificate (not expired, has private key, key size >= $minKeySize bits) was found for thumbprint '$($script:CertificateThumbprint)'."
             return
         }
-        $cert = ($candidates | Sort-Object -Property NotAfter -Descending)[0]
     }
     elseif ($script:CertificateSubject) {
-        $candidates = [System.Collections.Generic.List[object]]::new()
-        foreach ($storeLocation in @('LocalMachine', 'CurrentUser')) {
-            $storePath = "Cert:\$storeLocation\My"
-            $found = Get-ChildItem -Path $storePath -ErrorAction SilentlyContinue
-            foreach ($c in $found) {
-                if ($c.Subject -eq $script:CertificateSubject -and (& $isUsableCert $c)) {
-                    $candidates.Add($c)
-                }
-            }
-        }
-        if ($candidates.Count -eq 0) {
+        $cert = Resolve-DJMCertificate -Subject $script:CertificateSubject -MinKeySize $minKeySize
+        if (-not $cert) {
             Write-Warning "Get-DJMBearerToken: no valid certificate (not expired, has private key, key size >= $minKeySize bits) with subject '$($script:CertificateSubject)' was found."
             return
         }
-        # Pick the one with the latest NotAfter (most recently issued)
-        $cert = ($candidates | Sort-Object -Property NotAfter -Descending)[0]
     }
 
     if ($cert) {
-        # Build JWT assertion
-        $thumbprintBytes = [System.Convert]::FromHexString($cert.Thumbprint)
-        $x5t = [System.Convert]::ToBase64String($thumbprintBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-
-        $nowEpoch = [long]([datetime]::UtcNow - [datetime]::new(1970, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc)).TotalSeconds
-        $expEpoch = $nowEpoch + 300  # 5 minutes
-
-        $jwtHeader = @{ alg = 'RS256'; typ = 'JWT'; x5t = $x5t } | ConvertTo-Json -Compress
-        $jwtPayload = @{
-            aud = "https://$loginHost/$($script:TenantId)/oauth2/v2.0/token"
-            iss = $script:AppId
-            sub = $script:AppId
-            jti = (New-Guid).Guid
-            nbf = $nowEpoch
-            exp = $expEpoch
-        } | ConvertTo-Json -Compress
-
-        $toBase64Url = {
-            param ([string]$Text)
-            [System.Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Text)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-        }
-
-        $headerB64  = & $toBase64Url $jwtHeader
-        $payloadB64 = & $toBase64Url $jwtPayload
-        $unsignedJwt = "$headerB64.$payloadB64"
-
         try {
-            $rsaKey = $cert.GetRSAPrivateKey()
-            $signatureBytes = $rsaKey.SignData(
-                [System.Text.Encoding]::UTF8.GetBytes($unsignedJwt),
-                [System.Security.Cryptography.HashAlgorithmName]::SHA256,
-                [System.Security.Cryptography.RSASignaturePadding]::Pkcs1
-            )
-            $signatureB64 = [System.Convert]::ToBase64String($signatureBytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+            $signedJwt = New-DJMJwtAssertion -Certificate $cert -Audience $tokenUrl -ClientId $script:AppId
         }
         catch {
             Write-Warning "Get-DJMBearerToken: failed to sign JWT assertion: $_"
             Add-DJMInternalError -Source 'Get-DJMBearerToken' -Message 'JWT assertion signing failed' -Exception $_.Exception
             return
         }
-
-        $signedJwt = "$unsignedJwt.$signatureB64"
 
         $body = @{
             grant_type            = 'client_credentials'

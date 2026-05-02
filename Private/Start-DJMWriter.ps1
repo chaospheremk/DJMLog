@@ -91,6 +91,12 @@ function Start-DJMWriter {
         AppSecret            = $null
         CertificateSubject   = $null
         CertificateThumbprint= $null
+        # Resolved X509Certificate2 instance — populated by Update-DJMWriterShared
+        # via Resolve-DJMCertificate when thumbprint/subject is configured. Lives
+        # here (not in Cert: PSDrive) because the writer runspace cannot reach
+        # Cert: across runspace boundaries; the resolved instance is a regular
+        # .NET object that crosses fine. See ADR-027.
+        Certificate          = $null
         BearerTokenExternal  = $null
         BearerTokenCache     = $null
         BearerTokenExpiry    = [datetime]::MinValue
@@ -112,6 +118,7 @@ function Start-DJMWriter {
         # does not keep the process alive when the host script finishes.
         try { [System.Threading.Thread]::CurrentThread.IsBackground = $true } catch { $null = $_ }
         # __RETRY_HELPER_PLACEHOLDER__
+        # __JWT_HELPER_PLACEHOLDER__
 
         # Throttle EventLog source-registration retries when ACL denies it.
         $eventLogSourceAttempted = $false
@@ -573,11 +580,30 @@ function Start-DJMWriter {
             if (-not $endpoints) { return $null }
             $tokenUrl = "https://$($endpoints.LoginHost)/$($Shared.TenantId)/oauth2/v2.0/token"
 
-            # Build request body. We only support client_secret on the writer side
-            # for simplicity; certificate JWT remains in the main runspace's
-            # Get-DJMBearerToken (callable by main-runspace flush path).
+            # Build request body. Cert auth uses the X509Certificate2 instance
+            # marshalled into $Shared.Certificate by Update-DJMWriterShared (the
+            # main runspace resolves it via Resolve-DJMCertificate; ADR-027).
+            # Client secret is the v1.x-compatible fallback.
             $body = $null
-            if ($Shared.AppSecret) {
+            if ($Shared.Certificate) {
+                try {
+                    $jwt = New-DJMJwtAssertion -Certificate $Shared.Certificate `
+                                               -Audience    $tokenUrl `
+                                               -ClientId    $Shared.AppId
+                    $body = @{
+                        grant_type            = 'client_credentials'
+                        client_id             = $Shared.AppId
+                        scope                 = $endpoints.Scope
+                        client_assertion_type = 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer'
+                        client_assertion      = $jwt
+                    }
+                }
+                catch {
+                    Add-WriterErr -Source 'LogAnalyticsSink' -Message "JWT assertion build failed: $($_.Exception.Message)" -Exception $_.Exception
+                    return $null
+                }
+            }
+            elseif ($Shared.AppSecret) {
                 $secretStr = $null
                 try {
                     if ($Shared.AppSecret -is [System.Security.SecureString]) {
@@ -593,14 +619,6 @@ function Start-DJMWriter {
                     }
                 }
                 catch { return $null }
-            }
-            elseif ($Shared.CertificateThumbprint -or $Shared.CertificateSubject) {
-                # Cert auth lives in the main runspace's Get-DJMBearerToken;
-                # the writer cannot reach Cert: drive reliably across runspace
-                # boundaries. Surface as SelfLog so user knows to flush via
-                # the main runspace's Send-DJMLogBuffer / Flush-DJMLog path.
-                Add-WriterErr -Source 'LogAnalyticsSink' -Message 'Certificate auth requires main-runspace Send-DJMLogBuffer / Flush-DJMLog; writer-side flush skipped'
-                return $null
             }
             else { return $null }
 
@@ -678,15 +696,23 @@ function Start-DJMWriter {
     $script:WriterRunspace.ThreadOptions = [System.Management.Automation.Runspaces.PSThreadOptions]::UseCurrentThread
     $script:WriterRunspace.Open()
 
-    $retryFnPath = Join-Path $PSScriptRoot 'Invoke-DJMRestMethodWithRetry.ps1'
-    $retryFnBody = if (Test-Path -LiteralPath $retryFnPath) { Get-Content -LiteralPath $retryFnPath -Raw } else { '' }
-
-    # Inject the retry helper into the writer scriptblock at the placeholder
-    # position so the function is defined immediately after param(). This keeps
+    # Inject private helpers into the writer scriptblock at named placeholder
+    # positions so each function is defined immediately after param(). This keeps
     # param() as the first statement (a parser requirement) while making the
-    # helper visible inside the same scope as the writer loop.
-    $writerSource = $writerScript.ToString().Replace('# __RETRY_HELPER_PLACEHOLDER__', $retryFnBody)
-    $combined     = [scriptblock]::Create($writerSource)
+    # helpers visible inside the same scope as the writer loop. Adding a new
+    # injected helper is one entry in this list + one placeholder comment in
+    # the writer scriptblock.
+    $injections = @(
+        @{ Placeholder = '# __RETRY_HELPER_PLACEHOLDER__'; File = 'Invoke-DJMRestMethodWithRetry.ps1' }
+        @{ Placeholder = '# __JWT_HELPER_PLACEHOLDER__';   File = 'New-DJMJwtAssertion.ps1' }
+    )
+    $writerSource = $writerScript.ToString()
+    foreach ($inj in $injections) {
+        $fnPath = Join-Path $PSScriptRoot $inj.File
+        $fnBody = if (Test-Path -LiteralPath $fnPath) { Get-Content -LiteralPath $fnPath -Raw } else { '' }
+        $writerSource = $writerSource.Replace($inj.Placeholder, $fnBody)
+    }
+    $combined = [scriptblock]::Create($writerSource)
 
     $script:WriterPS          = [powershell]::Create()
     $script:WriterPS.Runspace = $script:WriterRunspace
@@ -752,6 +778,19 @@ function Update-DJMWriterShared {
     $s.CertificateThumbprint= $script:CertificateThumbprint
     $s.BearerTokenExternal  = $script:BearerTokenExternal
     $s.CloudEnvironment     = $script:CloudEnvironment
+
+    # Resolve the cert in the main runspace (only place Cert: is reachable) and
+    # marshal the X509Certificate2 instance into shared state. The writer signs
+    # JWTs against this instance via New-DJMJwtAssertion. ADR-027.
+    if ($script:CertificateThumbprint) {
+        $s.Certificate = Resolve-DJMCertificate -Thumbprint $script:CertificateThumbprint
+    }
+    elseif ($script:CertificateSubject) {
+        $s.Certificate = Resolve-DJMCertificate -Subject $script:CertificateSubject
+    }
+    else {
+        $s.Certificate = $null
+    }
 }
 
 # Block until ProcessedCount catches up to EnqueuedCount as observed at the moment
