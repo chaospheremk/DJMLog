@@ -143,6 +143,18 @@ function Set-DJMLogConfig {
     Pre-acquired bearer token (e.g. from a managed identity). When set, all
     other auth settings are bypassed. The caller manages token expiry.
 
+    .PARAMETER UseManagedIdentity
+    Acquire bearer tokens from the Azure Instance Metadata Service (IMDS,
+    169.254.169.254) instead of via certificate or client secret. Suitable for
+    Azure-hosted workloads (VM, App Service / Functions, Container Apps, AKS).
+    System-assigned MI is used by default; pass -ManagedIdentityClientId for a
+    user-assigned MI. The MI must hold the `Monitoring Metrics Publisher` role
+    on the Data Collection Rule. ADR-029.
+
+    .PARAMETER ManagedIdentityClientId
+    Optional user-assigned managed-identity client ID. Forwarded to IMDS as the
+    `client_id` query parameter. Ignored when -UseManagedIdentity is not set.
+
     .PARAMETER FlushThreshold
     Number of buffered entries that triggers an automatic flush via
     Send-DJMLogBuffer. Defaults to 100.
@@ -286,6 +298,10 @@ function Set-DJMLogConfig {
 
         [string]$BearerToken,
 
+        [switch]$UseManagedIdentity,
+
+        [string]$ManagedIdentityClientId,
+
         [ValidateRange(1, [int]::MaxValue)]
         [int]$FlushThreshold,
 
@@ -318,6 +334,7 @@ function Set-DJMLogConfig {
 
     $includeCallerSetFromFile   = $false
     $laEnabledSetFromFile       = $false
+    $useMiSetFromFile           = $false
     $laParamTouched             = $false
 
     # Load config file first so explicit parameters can override its values
@@ -389,6 +406,13 @@ function Set-DJMLogConfig {
                 }
                 if ($fileConfig.PSObject.Properties['BearerToken'] -and -not $PSBoundParameters.ContainsKey('BearerToken')) {
                     $BearerToken = $fileConfig.BearerToken
+                }
+                if ($fileConfig.PSObject.Properties['UseManagedIdentity'] -and -not $PSBoundParameters.ContainsKey('UseManagedIdentity')) {
+                    $UseManagedIdentity = [bool]$fileConfig.UseManagedIdentity
+                    $useMiSetFromFile = $true
+                }
+                if ($fileConfig.PSObject.Properties['ManagedIdentityClientId'] -and -not $PSBoundParameters.ContainsKey('ManagedIdentityClientId')) {
+                    $ManagedIdentityClientId = $fileConfig.ManagedIdentityClientId
                 }
                 if ($fileConfig.PSObject.Properties['FlushThreshold'] -and -not $PSBoundParameters.ContainsKey('FlushThreshold')) {
                     $FlushThreshold = [int]$fileConfig.FlushThreshold
@@ -481,7 +505,7 @@ function Set-DJMLogConfig {
     if ($PSBoundParameters.ContainsKey('AppSecret')           -or ($ConfigPath -and $null -ne $AppSecret)) {
         # Always store as SecureString. Plain-string input is supported for back-compat
         # but converted on assignment so $script:AppSecret never holds plaintext.
-        # The string-input path is deprecated; prefer SecureString.
+        # The string-input path is deprecated; prefer SecureString or -UseManagedIdentity.
         if ($AppSecret -is [System.Security.SecureString]) {
             $script:AppSecret = $AppSecret
         }
@@ -491,6 +515,7 @@ function Set-DJMLogConfig {
                 $script:AppSecret = $null
             }
             else {
+                Write-Warning 'Set-DJMLogConfig: -AppSecret as plain string is deprecated. Pass [SecureString] or use -UseManagedIdentity. ADR-015 / ADR-029.'
                 $script:AppSecret = ConvertTo-SecureString -String $plain -AsPlainText -Force
             }
         }
@@ -506,6 +531,14 @@ function Set-DJMLogConfig {
     }
     if ($PSBoundParameters.ContainsKey('BearerToken')         -or ($ConfigPath -and -not [string]::IsNullOrEmpty($BearerToken))) {
         $script:BearerTokenExternal = $BearerToken
+        $laParamTouched = $true
+    }
+    if ($PSBoundParameters.ContainsKey('UseManagedIdentity')  -or $useMiSetFromFile) {
+        $script:UseManagedIdentity = [bool]$UseManagedIdentity
+        $laParamTouched = $true
+    }
+    if ($PSBoundParameters.ContainsKey('ManagedIdentityClientId') -or ($ConfigPath -and -not [string]::IsNullOrEmpty($ManagedIdentityClientId))) {
+        $script:ManagedIdentityClientId = $ManagedIdentityClientId
         $laParamTouched = $true
     }
     if ($PSBoundParameters.ContainsKey('FlushThreshold')      -or ($ConfigPath -and $null -ne $FlushThreshold)) {
@@ -575,13 +608,17 @@ function Set-DJMLogConfig {
         if (-not $script:DcrImmutableId) { $missing.Add('DcrImmutableId') }
         if (-not $script:DcrStreamName)  { $missing.Add('DcrStreamName') }
 
+        # External bearer and managed-identity flows both bypass TenantId/AppId.
+        # MI resolves the identity via IMDS; an external bearer is supplied
+        # already minted.
         $hasBearer = [bool]$script:BearerTokenExternal
-        if (-not $hasBearer) {
+        $hasMi     = [bool]$script:UseManagedIdentity
+        if (-not $hasBearer -and -not $hasMi) {
             if (-not $script:TenantId) { $missing.Add('TenantId') }
             if (-not $script:AppId)    { $missing.Add('AppId') }
             $hasAuth = $script:AppSecret -or $script:CertificateSubject -or $script:CertificateThumbprint
             if (-not $hasAuth) {
-                $missing.Add('one of AppSecret/CertificateSubject/CertificateThumbprint/BearerToken')
+                $missing.Add('one of AppSecret/CertificateSubject/CertificateThumbprint/BearerToken/UseManagedIdentity')
             }
         }
 

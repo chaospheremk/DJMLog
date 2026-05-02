@@ -101,6 +101,9 @@ function Start-DJMWriter {
         BearerTokenCache     = $null
         BearerTokenExpiry    = [datetime]::MinValue
         CloudEnvironment     = 'GCCHigh'
+        # Managed identity (ADR-029) — IMDS replaces deprecated string AppSecret.
+        UseManagedIdentity      = $false
+        ManagedIdentityClientId = $null
     })
 
     # Writer scriptblock. All sink logic lives inline — the runspace does not
@@ -119,6 +122,7 @@ function Start-DJMWriter {
         try { [System.Threading.Thread]::CurrentThread.IsBackground = $true } catch { $null = $_ }
         # __RETRY_HELPER_PLACEHOLDER__
         # __JWT_HELPER_PLACEHOLDER__
+        # __MI_HELPER_PLACEHOLDER__
 
         # Throttle EventLog source-registration retries when ACL denies it.
         $eventLogSourceAttempted = $false
@@ -567,6 +571,39 @@ function Start-DJMWriter {
             if ($Shared.BearerTokenCache -and [datetime]::UtcNow -lt $Shared.BearerTokenExpiry) {
                 return $Shared.BearerTokenCache
             }
+
+            # Managed identity (ADR-029) — IMDS doesn't need TenantId/AppId.
+            if ($Shared.UseManagedIdentity) {
+                $miResourceMap = @{
+                    Commercial = 'https://monitor.azure.com'
+                    GCCHigh    = 'https://monitor.azure.us'
+                    DoD        = 'https://monitor.azure.us'
+                }
+                $miResource = $miResourceMap[$Shared.CloudEnvironment]
+                if (-not $miResource) {
+                    Add-WriterErr -Source 'LogAnalyticsSink' -Message "Unknown CloudEnvironment '$($Shared.CloudEnvironment)' for managed-identity resource lookup"
+                    return $null
+                }
+                try {
+                    $miParams = @{ Resource = $miResource }
+                    if (-not [string]::IsNullOrEmpty($Shared.ManagedIdentityClientId)) {
+                        $miParams['ClientId'] = $Shared.ManagedIdentityClientId
+                    }
+                    $miResp = Get-DJMManagedIdentityToken @miParams
+                    if (-not $miResp.access_token -or -not $miResp.expires_in) {
+                        Add-WriterErr -Source 'LogAnalyticsSink' -Message 'Managed-identity endpoint returned incomplete response'
+                        return $null
+                    }
+                    $Shared.BearerTokenCache  = $miResp.access_token
+                    $Shared.BearerTokenExpiry = [datetime]::UtcNow.AddSeconds([int]$miResp.expires_in - 300)
+                    return $Shared.BearerTokenCache
+                }
+                catch {
+                    Add-WriterErr -Source 'LogAnalyticsSink' -Message "Managed-identity token acquisition failed: $($_.Exception.Message)" -Exception $_.Exception
+                    return $null
+                }
+            }
+
             if (-not $Shared.TenantId -or -not $Shared.AppId) {
                 Add-WriterErr -Source 'LogAnalyticsSink' -Message 'TenantId/AppId missing for token acquisition'
                 return $null
@@ -705,6 +742,7 @@ function Start-DJMWriter {
     $injections = @(
         @{ Placeholder = '# __RETRY_HELPER_PLACEHOLDER__'; File = 'Invoke-DJMRestMethodWithRetry.ps1' }
         @{ Placeholder = '# __JWT_HELPER_PLACEHOLDER__';   File = 'New-DJMJwtAssertion.ps1' }
+        @{ Placeholder = '# __MI_HELPER_PLACEHOLDER__';    File = 'Get-DJMManagedIdentityToken.ps1' }
     )
     $writerSource = $writerScript.ToString()
     foreach ($inj in $injections) {
@@ -778,6 +816,8 @@ function Update-DJMWriterShared {
     $s.CertificateThumbprint= $script:CertificateThumbprint
     $s.BearerTokenExternal  = $script:BearerTokenExternal
     $s.CloudEnvironment     = $script:CloudEnvironment
+    $s.UseManagedIdentity   = [bool]$script:UseManagedIdentity
+    $s.ManagedIdentityClientId = $script:ManagedIdentityClientId
 
     # Resolve the cert in the main runspace (only place Cert: is reachable) and
     # marshal the X509Certificate2 instance into shared state. The writer signs

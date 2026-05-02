@@ -26,10 +26,11 @@ Set-DJMLogConfig [[-Path] <string>] [[-MaxSizeMB] <double>] [[-MutexTimeoutMs] <
  [[-DcrEndpointUri] <string>] [[-DcrImmutableId] <string>] [[-DcrStreamName] <string>]
  [[-TenantId] <string>] [[-AppId] <string>] [[-AppSecret] <psobject>]
  [[-CertificateSubject] <string>] [[-CertificateThumbprint] <string>] [[-BearerToken] <string>]
- [[-FlushThreshold] <int>] [[-MaxBufferSize] <int>] [[-MaxBufferBytes] <long>]
- [[-MaxFlushRetries] <int>] [[-ChannelCapacity] <int>] [[-Sinks] <string[]>]
- [[-RedactionPatterns] <string[]>] [[-RedactionPresets] <string[]>] [[-SampleRate] <hashtable>]
- [[-IncludeHostContext] <bool>] [[-ConfigPath] <string>] [<CommonParameters>]
+ [[-ManagedIdentityClientId] <string>] [[-FlushThreshold] <int>] [[-MaxBufferSize] <int>]
+ [[-MaxBufferBytes] <long>] [[-MaxFlushRetries] <int>] [[-ChannelCapacity] <int>]
+ [[-Sinks] <string[]>] [[-RedactionPatterns] <string[]>] [[-RedactionPresets] <string[]>]
+ [[-SampleRate] <hashtable>] [[-IncludeHostContext] <bool>] [[-ConfigPath] <string>]
+ [-UseManagedIdentity] [<CommonParameters>]
 ```
 
 ## ALIASES
@@ -293,7 +294,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 23
+  Position: 24
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -343,7 +344,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 29
+  Position: 30
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -432,7 +433,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 19
+  Position: 20
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -480,7 +481,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 28
+  Position: 29
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -513,6 +514,30 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -ManagedIdentityClientId
+
+Optional user-assigned managed-identity client ID.
+Forwarded to IMDS as the
+`client_id` query parameter.
+Ignored when -UseManagedIdentity is not set.
+
+```yaml
+Type: System.String
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: 19
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### -MaxBufferBytes
 
 Maximum total serialised size of the buffer in bytes.
@@ -531,7 +556,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 21
+  Position: 22
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -555,7 +580,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 20
+  Position: 21
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -579,7 +604,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 22
+  Position: 23
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -700,7 +725,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 25
+  Position: 26
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -721,7 +746,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 26
+  Position: 27
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -818,7 +843,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 27
+  Position: 28
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -842,7 +867,7 @@ SupportsWildcards: false
 Aliases: []
 ParameterSets:
 - Name: (All)
-  Position: 24
+  Position: 25
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
@@ -864,6 +889,35 @@ Aliases: []
 ParameterSets:
 - Name: (All)
   Position: 13
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -UseManagedIdentity
+
+Acquire bearer tokens from the Azure Instance Metadata Service (IMDS,
+169.254.169.254) instead of via certificate or client secret.
+Suitable for
+Azure-hosted workloads (VM, App Service / Functions, Container Apps, AKS).
+System-assigned MI is used by default; pass -ManagedIdentityClientId for a
+user-assigned MI.
+The MI must hold the `Monitoring Metrics Publisher` role
+on the Data Collection Rule.
+ADR-029.
+
+```yaml
+Type: System.Management.Automation.SwitchParameter
+DefaultValue: False
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
   IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false

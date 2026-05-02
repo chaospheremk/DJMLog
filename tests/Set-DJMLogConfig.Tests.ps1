@@ -26,6 +26,8 @@ Describe 'Set-DJMLogConfig' {
             $script:CertificateSubject      = $null
             $script:CertificateThumbprint   = $null
             $script:BearerTokenExternal     = $null
+            $script:UseManagedIdentity      = $false
+            $script:ManagedIdentityClientId = $null
             $script:FlushThreshold          = 100
             $script:MaxBufferSize           = 5000
             $script:MaxFlushRetries         = 3
@@ -490,6 +492,49 @@ Describe 'Set-DJMLogConfig' {
         It 'does not validate LA preconditions when LogAnalyticsEnabled is false' {
             # LA is disabled (default) — no DCR config set — no error expected
             { Set-DJMLogConfig -Path 'C:\Logs\test.jsonl' -ErrorAction Stop } | Should -Not -Throw
+        }
+
+        It 'does not emit an error when -UseManagedIdentity supplies auth without TenantId/AppId (ADR-029)' {
+            $params = @{
+                LogAnalyticsEnabled = $true
+                DcrEndpointUri      = 'https://fake.ingest.monitor.azure.us'
+                DcrImmutableId      = 'dcr-fake'
+                DcrStreamName       = 'Custom-Test_CL'
+                UseManagedIdentity  = $true
+            }
+            { Set-DJMLogConfig @params -ErrorAction Stop } | Should -Not -Throw
+        }
+
+        It 'persists -UseManagedIdentity to script scope' {
+            Set-DJMLogConfig -UseManagedIdentity
+            InModuleScope DJMLog { $script:UseManagedIdentity } | Should -BeTrue
+        }
+
+        It 'persists -ManagedIdentityClientId to script scope' {
+            Set-DJMLogConfig -UseManagedIdentity -ManagedIdentityClientId 'mi-client-id'
+            InModuleScope DJMLog { $script:ManagedIdentityClientId } | Should -Be 'mi-client-id'
+        }
+
+        It 'leaves UseManagedIdentity as false when not supplied' {
+            Set-DJMLogConfig -Path 'C:\Logs\x.jsonl'
+            InModuleScope DJMLog { $script:UseManagedIdentity } | Should -BeFalse
+        }
+    }
+
+    Context 'AppSecret deprecation warning (ADR-015 / ADR-029)' {
+
+        It 'emits a deprecation warning when AppSecret is supplied as a plain string' {
+            Set-DJMLogConfig -AppSecret 'plain-string' -WarningVariable w -WarningAction SilentlyContinue
+            $w | Should -Not -BeNullOrEmpty
+            ($w | ForEach-Object { $_.ToString() }) -join ' ' | Should -Match 'deprecated'
+        }
+
+        It 'does not emit a deprecation warning when AppSecret is supplied as a SecureString' {
+            $secure = ConvertTo-SecureString 'p@ss' -AsPlainText -Force
+            Set-DJMLogConfig -AppSecret $secure -WarningVariable w -WarningAction SilentlyContinue
+            # Filter out unrelated warnings (e.g. M5 endpoint mismatch) by matching on the deprecation text
+            $deprecationWarnings = @($w | Where-Object { $_.ToString() -match 'deprecated' })
+            $deprecationWarnings.Count | Should -Be 0
         }
     }
 

@@ -64,6 +64,8 @@ $script:AppId                    = $null
 $script:AppSecret                = $null
 $script:CertificateSubject       = $null      # e.g. 'CN=DJMLog-Auth'
 $script:CertificateThumbprint    = $null      # pin to specific cert
+$script:UseManagedIdentity       = $false     # IMDS-based managed identity (ADR-029)
+$script:ManagedIdentityClientId  = $null      # optional user-assigned MI client id
 $script:FlushThreshold           = 100
 $script:MaxBufferSize            = 5000
 $script:MaxBufferBytes           = 52428800   # 50 MB byte-level cap on the buffer
