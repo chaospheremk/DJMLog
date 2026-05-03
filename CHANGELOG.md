@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Certificate auth in writer-runspace LA flush (ADR-027).** `Set-DJMLogConfig -CertificateThumbprint` and `-CertificateSubject` now drive end-to-end LA flush from the writer runspace. The cert is resolved in the main runspace at config time (only place `Cert:` PSDrive is reachable); the resolved `X509Certificate2` is marshalled into the writer; JWT signing happens inside the writer via the new `New-DJMJwtAssertion` private helper. Closes the ADR-025 negative consequence — callers no longer need to drop to main-runspace `Send-DJMLogBuffer -Force` for cert auth. PR #53.
+- **Managed identity (IMDS) for LA auth (ADR-029).** New `Set-DJMLogConfig -UseManagedIdentity` switch and `-ManagedIdentityClientId` parameter for system-assigned and user-assigned MI respectively. Native HTTP against `http://169.254.169.254/metadata/identity/oauth2/token` (no Az.Accounts / Azure.Identity SDK dependency); priority 2 in the auth resolver, after `BearerTokenExternal` and before cert / secret. Cloud resource map: Commercial → `https://monitor.azure.com`; GCCHigh / DoD → `https://monitor.azure.us`. Delivers the ADR-015 deprecation-cycle replacement. PR #55.
+- **`scripts/Invoke-WithDJMHostExit.ps1` helper (ADR-030).** Single source of truth for the BUG-023 / ADR-026 wrapper rationale. Accepts `-Script` as either a `[scriptblock]` (call-site form) or a `[string]` (`pwsh -File` fallback). On success: `[System.Environment]::Exit(($LASTEXITCODE ?? 0))`. On exception: writes the error and exits 1. Replaces the four copy-pasted `try/catch` + `[Environment]::Exit` blocks in `.github/workflows/ci.yml`, `.github/workflows/docs.yml`, `.github/workflows/release.yml`, and `scripts/Invoke-StressDrill.ps1`. PR #56.
+
+### Changed
+
+- **String `AppSecret` emits a deprecation `Write-Warning` (ADR-029).** When `Set-DJMLogConfig -AppSecret` is called with a non-empty plain `[string]`, the cmdlet warns and points callers at `[SecureString]` or `-UseManagedIdentity`. `[SecureString]` input remains warning-free. Back-compat preserved.
+- **CI matrix narrowed to PowerShell 7.5 (ADR-028).** PS 7.4 dropped from CI; 7.6 bump deferred until `mcr.microsoft.com/powershell:7.6-ubuntu-22.04` ships (no `preview-` prefix) and `ubuntu-latest` ships pwsh ≥ 7.6 by default. Manifest `PowerShellVersion` stays at `7.0` — the module does not use any 7.5+ API. PR #54.
+- **`Stop-DJMWriter` comment block trimmed (ADR-030).** The 11-line soft-stop / hard-stop history shrunk to a 5-line summary that points at `scripts/Invoke-WithDJMHostExit.ps1` for the rationale.
+
+### Deferred
+
+- **Logs Ingestion CI gate enablement (ADR-031).** The advisory `Logs Ingestion Integration` job in `ci.yml` (lines 225-301) stays `continue-on-error: true` until a real consumer ships LA sink usage. Operational checklist preserved in `issues.md`.
+
 ## [2.0.0] - 2026-04-26
 
 Major release. Async writer architecture, multi-sink fan-out, schema v2,
