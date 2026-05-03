@@ -77,25 +77,18 @@ jobs:
         shell: pwsh
         env:
           ACR_LOGIN_SERVER: ${{ vars.ACR_LOGIN_SERVER }}
-        # Wrap in [System.Environment]::Exit because Invoke-Build Release
-        # imports DJMLog (the Test task within Release does), and the v2.0
-        # async writer's foreground pipeline thread blocks pwsh.exe shutdown.
-        # PowerShell's `exit` keyword routes through flow-control machinery
-        # that respects the foreground thread; [Environment]::Exit forces
-        # the .NET host down.
+        # Wrap via scripts/Invoke-WithDJMHostExit.ps1 — see ADR-030. Invoke-Build
+        # Release imports DJMLog (the Test task does); the helper forces
+        # [System.Environment]::Exit so the v2.0 async writer cannot block
+        # pwsh.exe shutdown.
         run: |
-          try {
+          & ./scripts/Invoke-WithDJMHostExit.ps1 -Script {
               $buildParams = @{
                   Task          = 'Release'
                   Configuration = 'Release'
                   Version       = '${{ steps.version.outputs.version }}'
               }
               Invoke-Build @buildParams
-              [System.Environment]::Exit(0)
-          }
-          catch {
-              Write-Host $_
-              [System.Environment]::Exit(1)
           }
 
       - name: Create GitHub Release

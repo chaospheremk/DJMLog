@@ -106,24 +106,12 @@ jobs:
 
       - name: Run tests
         shell: pwsh
-        # Explicit [Environment]::Exit after Invoke-Build because the v2.0
-        # async writer's PowerShell pipeline thread is foreground and
-        # PowerShell does not expose a knob to mark it background reliably
-        # across repeated Pester Import-Module -Force cycles. Without this
-        # exit call the pwsh subprocess hangs ~19 min after the test step
-        # until the runner cancels it. PowerShell's own `exit` keyword goes
-        # through flow-control machinery that respects the writer thread;
-        # [Environment]::Exit forces the .NET host down regardless of
-        # foreground threads, which is what we need here.
+        # Wrap via scripts/Invoke-WithDJMHostExit.ps1 — see ADR-030. The
+        # helper forces [System.Environment]::Exit so the v2.0 async writer's
+        # foreground pipeline thread cannot block pwsh.exe shutdown after
+        # Pester's Remove-Module + Import-Module -Force cycles.
         run: |
-          try {
-              Invoke-Build Test -Configuration Release
-              [System.Environment]::Exit(0)
-          }
-          catch {
-              Write-Host $_
-              [System.Environment]::Exit(1)
-          }
+          & ./scripts/Invoke-WithDJMHostExit.ps1 -Script { Invoke-Build Test -Configuration Release }
 
       - name: Upload test results
         if: always()
