@@ -1,113 +1,24 @@
 # Code Session — `DJMLog Structured Logging Module`
 
-## Context
-
-This is the code repository for the `DJMLog Structured Logging Module` vault project.
-Vault memory files are one level up in the parent directory:
-
-- ../bugs.md        — known issues and solutions; check before debugging
-- ../decisions.md   — decisions made; check before proposing changes
-- ../key-facts.md   — project configuration reference
-- ../issues.md      — work log
-
-The vault session that manages planning and note-taking runs from the
-vault root. This code session runs from this directory only.
-
-## On Startup
-
-1. Read ../decisions.md
-2. Read ../bugs.md
-3. Read ../key-facts.md
-4. Run `git status` — report any untracked or modified files and offer to commit them via PR
-
-## Memory Protocols
-
-**During the session, watch for:**
-
-- Configuration patterns, parameter conventions, or environment facts worth keeping as reference — prompt to add to ../key-facts.md
-- Learnings that are broadly reusable beyond this project — flag them so the vault session can promote them to resource notes
-- Decisions being made conversationally that haven't been logged — prompt to add to ../decisions.md before the session ends
-
-Before proposing a technical approach: read ../decisions.md
-Before debugging: read ../bugs.md
-After fixing a bug: append to ../bugs.md using the standard format
-After making a technical decision: append to ../decisions.md as an ADR
-After completing a work block: append to ../issues.md
-If an entry represents broadly reusable knowledge: add `<!-- promote-candidate -->` so vault:promote finds it
-
-## Memory Boundaries
-
-Vault memory files (../bugs.md, ../decisions.md, ../key-facts.md, ../issues.md):
-- Decisions, bugs, key facts, work log entries
-- Anything the vault session or future sessions need
-- Anything that might be promoted to a resource note
-
-Serena memories (.serena/memories/):
-- Code structure discovered via onboarding (module layout, public API surface)
-- Build/test commands and environment setup notes
-- Session continuity ("in progress" context for multi-session work)
-- Code-session-only — the vault session never reads these
-
-## Serena Tools
-
-- Before modifying a public function signature: use `find_referencing_symbols` to identify all callers
-- For cross-file renames: use `rename_symbol` instead of manual find-and-replace
-- For single-function edits: prefer `replace_symbol_body` over full-file Edit
-- For adding adjacent functions: use `insert_after_symbol` or `insert_before_symbol`
-- Fallback: if Serena cannot find the symbol (syntax errors, unparseable file), use Edit
-- Before writing code after a research phase: use `think_about_collected_information`
-- During multi-step implementations: use `think_about_task_adherence` after each step
-- Before reporting completion: use `think_about_whether_you_are_done`
-
-## Session Handoff
-
-Before ending a code session:
-1. Ensure all bug fixes are logged in ../bugs.md
-2. Ensure all decisions are logged in ../decisions.md
-3. Ensure work completed is logged in ../issues.md
-4. Report a one-paragraph summary of what changed
-
-## Rules
-
-- No real IDs, hostnames, credentials, or org-identifying content — ever
-- All parameters use placeholders: `<tenant-id>` `<subscription-id>` etc.
-- Never modify files outside this code/ folder except the four memory files
-  (../bugs.md, ../decisions.md, ../key-facts.md, ../issues.md)
-- The `powershell-standards` and `graph-api-powershell` skills trigger
-  automatically when writing relevant code — no manual reads needed
-- Read `../../../_meta/security.md` for full sanitization rules when needed
-
-## GitHub
-
-This folder is its own git repository.
-Push directly to this project's GitHub remote.
-Do not use the vault's 50-Outputs/ for this project's code.
-
 ## Architecture
 
-Six exported functions across individual files in `Public/`:
+One function per file: 11 exported functions in `Public/`, 13 private helpers in
+`Private/` (`../key-facts.md` keeps the full inventory). Core entry points:
 
-| Function | Role |
-|---|---|
-| `Set-DJMLogConfig` | Sets module-level defaults (path, max size, mutex timeout, min level, rotation schedule, retention policies, caller auto-capture, Log Analytics integration). Accepts direct params or a JSON config file. |
-| `Write-DJMLog` | Appends a JSONL entry atomically using a named OS mutex (`DJMLog_WriteAccess`). Rotates the file when `MaxSizeMB` is exceeded or on schedule. Skips entries below `MinLevel`. Auto-captures caller info when `IncludeCaller` is enabled. Optionally buffers entries for Azure Log Analytics. |
-| `Read-DJMLog` | Streams a JSONL file line-by-line, filters by level/correlation/time/text, flattens nested metadata, and normalises all output objects to identical property sets. |
-| `Send-DJMLogBuffer` | Flushes the in-memory log buffer to Azure Log Analytics via the Logs Ingestion API (DCR-based). Chunks batches to 500 KB. |
-| `ConvertTo-DJMDictionary` | Converts a PSObject list or hashtable to `Dictionary[string, PSObject]` with lowercase keys. |
-| `ConvertTo-DJMOrderedPSObject` | Converts an IDictionary to a PSCustomObject preserving key order. |
-
-Two private helpers:
-- `Expand-MetadataValue` — recursive flattener for nested metadata objects (underscore-separated key paths, e.g. `Error_ScriptName`).
-- `Get-DJMBearerToken` — OAuth2 client_credentials token acquisition + caching (cert JWT assertion or client secret). Cloud-aware (Commercial, GCCHigh, DoD).
+- `Set-DJMLogConfig` — module defaults and sinks; direct params or a JSON config file
+- `Write-DJMLog` — enqueues an entry for the async writer runspace (ADR-019)
+- `Read-DJMLog` — streams, filters, and flattens a JSONL log
+- `Flush-DJMLog` / `Wait-DJMLog` — fence the writer queue (`Send-DJMLogBuffer` is a back-compat wrapper)
+- `Get-DJMLogDiagnostics` — writer state and SelfLog errors
 
 ### Key design points
 
-- **Parallel safety**: `Write-DJMLog` acquires a named mutex before each append so multiple runspaces can write without file-lock contention. `MutexTimeoutMs` (default 2000 ms) controls how long to wait.
+- **Parallel safety**: the writer runspace acquires the named OS mutex `DJMLog_WriteAccess` before each file append, so multiple processes can write the same file without lock contention. `MutexTimeoutMs` (default 2000 ms) controls how long to wait.
 - **Log rotation**: when the file exceeds `MaxSizeMB` or the configured `RotationSchedule` (Daily/Weekly/Monthly) triggers, the file is renamed with a UTC timestamp suffix before a new file is started.
 - **Min-level filtering**: `MinLevel` (DEBUG < INFO < WARN < ERROR) controls the minimum severity written; entries below the threshold are silently dropped.
 - **Retention policies**: `RetainDays` and `RetainFiles` automatically clean up old rotated log files.
 - **Caller auto-capture**: when `IncludeCaller` is `$true` (the default), each entry's Metadata includes the calling script path and line number.
-- **Azure Log Analytics integration**: optional buffered ingestion via the Logs Ingestion API (DCR-based REST). Entries are buffered in-memory and flushed in batches. Supports Commercial, GCCHigh, and DoD cloud environments (default GCCHigh). Auth: certificate JWT assertion, client secret, or pre-acquired bearer token. Circuit breaker disables auto-flush after consecutive failures.
+- **Azure Log Analytics integration**: optional buffered ingestion via the Logs Ingestion API (DCR-based REST). Entries are buffered in-memory and flushed in batches. Supports Commercial, GCCHigh, and DoD cloud environments (default GCCHigh). Auth, in priority order: pre-acquired bearer token → managed identity (IMDS) → certificate JWT assertion → client secret. Circuit breaker disables auto-flush after consecutive failures.
 - **Metadata flattening**: `Read-DJMLog` recursively promotes nested metadata to top-level columns so output can be piped to `Export-Csv` or `Out-GridView` cleanly.
 - **Column normalisation**: every object returned by `Read-DJMLog` carries the same property set (the union of all columns seen) so that `Format-Table` and CSV export produce consistent columns even when entries have different metadata shapes.
 
@@ -171,28 +82,16 @@ Pass the config file path to `Set-DJMLogConfig -ConfigPath <file>`. Explicit par
 DJMLog/
 ├── DJMLog.psd1                          # Module manifest
 ├── DJMLog.psm1                          # Module loader — dot-sources Public/ + Private/
-├── Public/                              # One .ps1 per exported function
-│   ├── Set-DJMLogConfig.ps1
-│   ├── Write-DJMLog.ps1
-│   ├── Read-DJMLog.ps1
-│   ├── Send-DJMLogBuffer.ps1
-│   ├── ConvertTo-DJMDictionary.ps1
-│   └── ConvertTo-DJMOrderedPSObject.ps1
-├── Private/                             # Internal helpers
-│   ├── Expand-MetadataValue.ps1
-│   └── Get-DJMBearerToken.ps1
-├── tests/                               # Pester 5 test suite
-│   ├── Set-DJMLogConfig.Tests.ps1
-│   ├── Write-DJMLog.Tests.ps1
-│   ├── Read-DJMLog.Tests.ps1
-│   ├── Send-DJMLogBuffer.Tests.ps1
-│   ├── ConvertTo-DJMDictionary.Tests.ps1
-│   └── ConvertTo-DJMOrderedPSObject.Tests.ps1
+├── Public/                              # One .ps1 per exported function (11)
+├── Private/                             # One .ps1 per internal helper (13)
+├── tests/                               # Pester 5 suite, one .Tests.ps1 per function + StressTests/
+├── scripts/                             # Git hooks installer, stress drill, Invoke-WithDJMHostExit wrapper
 ├── PSScriptAnalyzerSettings.psd1        # Linter config
 └── .github/workflows/
     ├── ci.yml                           # PSScriptAnalyzer + Pester on PR
     ├── release.yml                      # Tag-triggered ACR publish + GitHub Release
     ├── docs.yml                         # Zensical docs build + GitHub Pages deploy
+    ├── pre-commit-update.yml            # Scheduled pre-commit hook version bumps
     └── sync-dev.yml                     # Auto-merge main into dev
 ```
 
