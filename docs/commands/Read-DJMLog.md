@@ -23,7 +23,7 @@ Reads and filters a JSONL log file produced by Write-DJMLog.
 Read-DJMLog [[-LogPath] <string>] [[-Level] <string[]>] [[-CorrelationId] <string>]
  [[-MessageContains] <string>] [[-Since] <datetime>] [[-Until] <datetime>] [[-First] <int>]
  [[-Last] <int>] [[-CsvPath] <string>] [-Colorize] [-ExportCsv] [-OutGridView] [-Raw] [-PassThru]
- [-Stream] [<CommonParameters>]
+ [-Stream]
 ```
 
 ## ALIASES
@@ -397,11 +397,11 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 
 
-### System.Management.Automation.PSObject
+### System.Management.Automation.PSObject[]
 
 
 
-### System.String
+### System.String[]
 
 
 

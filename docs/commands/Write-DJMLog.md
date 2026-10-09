@@ -24,7 +24,7 @@ Write-DJMLog -Message <string> -ErrorObject <ErrorRecord> [-Level <string>]
  [-CorrelationId <string>] [-LogPath <string>] [-Metadata <psobject>] [-MinLevel <string>]
  [-MaxSizeMB <double>] [-RotationSchedule <string>] [-RetainDays <int>] [-RetainFiles <int>]
  [-MutexTimeoutMs <int>] [-Depth <int>] [-CallerDepth <int>] [-NoCaller] [-NoHostContext]
- [-PassThru] [<CommonParameters>]
+ [-PassThru]
 ```
 
 ### Default
@@ -33,7 +33,7 @@ Write-DJMLog -Message <string> -ErrorObject <ErrorRecord> [-Level <string>]
 Write-DJMLog -Message <string> [-Level <string>] [-CorrelationId <string>] [-LogPath <string>]
  [-Metadata <psobject>] [-MinLevel <string>] [-MaxSizeMB <double>] [-RotationSchedule <string>]
  [-RetainDays <int>] [-RetainFiles <int>] [-MutexTimeoutMs <int>] [-Depth <int>]
- [-CallerDepth <int>] [-NoCaller] [-NoHostContext] [-PassThru] [<CommonParameters>]
+ [-CallerDepth <int>] [-NoCaller] [-NoHostContext] [-PassThru]
 ```
 
 ## ALIASES

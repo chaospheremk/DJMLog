@@ -20,7 +20,7 @@ Converts an IDictionary into a PSCustomObject with stable property order.
 ### __AllParameterSets
 
 ```
-ConvertTo-DJMOrderedPSObject [-Dictionary] <IDictionary> [<CommonParameters>]
+ConvertTo-DJMOrderedPSObject [-Dictionary] <IDictionary>
 ```
 
 ## ALIASES

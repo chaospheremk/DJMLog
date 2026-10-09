@@ -21,13 +21,12 @@ Converts PSObjects or a hashtable into a Dictionary[string, PSObject].
 
 ```
 ConvertTo-DJMDictionary -InputObject <psobject> -KeyProperty <string> [-OnDuplicateKey <string>]
- [<CommonParameters>]
 ```
 
 ### FromHashtable
 
 ```
-ConvertTo-DJMDictionary -Hashtable <hashtable> [<CommonParameters>]
+ConvertTo-DJMDictionary -Hashtable <hashtable>
 ```
 
 ## ALIASES
