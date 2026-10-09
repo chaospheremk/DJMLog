@@ -20,7 +20,7 @@ Pops the most recently pushed activity scope and emits a duration entry.
 ### __AllParameterSets
 
 ```
-Stop-DJMActivity [<CommonParameters>]
+Stop-DJMActivity
 ```
 
 ## ALIASES

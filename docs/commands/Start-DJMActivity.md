@@ -20,7 +20,7 @@ Pushes a new activity scope onto the per-runspace activity stack.
 ### __AllParameterSets
 
 ```
-Start-DJMActivity [-Name] <string> [[-CorrelationId] <string>] [<CommonParameters>]
+Start-DJMActivity [-Name] <string> [[-CorrelationId] <string>]
 ```
 
 ## ALIASES

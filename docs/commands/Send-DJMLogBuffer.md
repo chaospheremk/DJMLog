@@ -20,7 +20,7 @@ Back-compat wrapper. Forwards to Flush-DJMLog (v2.0 async writer ADR-019).
 ### __AllParameterSets
 
 ```
-Send-DJMLogBuffer [-Force] [<CommonParameters>]
+Send-DJMLogBuffer [-Force]
 ```
 
 ## ALIASES

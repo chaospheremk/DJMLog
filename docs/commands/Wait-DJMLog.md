@@ -20,7 +20,7 @@ Blocks until the async writer channel has drained, with a timeout.
 ### __AllParameterSets
 
 ```
-Wait-DJMLog [-TimeoutSec] <int> [<CommonParameters>]
+Wait-DJMLog [-TimeoutSec] <int>
 ```
 
 ## ALIASES

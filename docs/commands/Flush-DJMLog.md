@@ -20,7 +20,7 @@ Drains the async writer channel and (if Log Analytics is enabled) flushes the in
 ### __AllParameterSets
 
 ```
-Flush-DJMLog [[-TimeoutSec] <int>] [-Force] [<CommonParameters>]
+Flush-DJMLog [[-TimeoutSec] <int>] [-Force]
 ```
 
 ## ALIASES

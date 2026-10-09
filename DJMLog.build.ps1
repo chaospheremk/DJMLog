@@ -24,6 +24,7 @@ $DocsDir      = Join-Path $PSScriptRoot $Config.DocsDir
 $OutputDir    = Join-Path $PSScriptRoot $Config.OutputDir
 $AcrRepo      = $Config.AcrRepoName
 $PackageDir   = Join-Path $OutputDir $ModuleName
+$PlatyPSVersion = $Config.PlatyPSVersion
 
 # --- Tasks ------------------------------------------------------------------
 
@@ -138,7 +139,7 @@ task Test {
 
 task Docs {
     Import-Module $ManifestPath -Force
-    Import-Module Microsoft.PowerShell.PlatyPS
+    Import-Module Microsoft.PowerShell.PlatyPS -RequiredVersion $PlatyPSVersion
 
     if (-not (Test-Path $DocsDir)) {
         New-Item -ItemType Directory -Path $DocsDir -Force | Out-Null
@@ -199,7 +200,7 @@ task AssertDocsClean {
 
     try {
         Import-Module $ManifestPath -Force
-        Import-Module Microsoft.PowerShell.PlatyPS
+        Import-Module Microsoft.PowerShell.PlatyPS -RequiredVersion $PlatyPSVersion
 
         # Generate fresh docs to temp directory
         $commands = Get-Command -Module $ModuleName

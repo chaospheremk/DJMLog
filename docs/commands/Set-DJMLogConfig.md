@@ -30,7 +30,7 @@ Set-DJMLogConfig [[-Path] <string>] [[-MaxSizeMB] <double>] [[-MutexTimeoutMs] <
  [[-MaxBufferBytes] <long>] [[-MaxFlushRetries] <int>] [[-ChannelCapacity] <int>]
  [[-Sinks] <string[]>] [[-RedactionPatterns] <string[]>] [[-RedactionPresets] <string[]>]
  [[-SampleRate] <hashtable>] [[-IncludeHostContext] <bool>] [[-ConfigPath] <string>]
- [-UseManagedIdentity] [<CommonParameters>]
+ [-UseManagedIdentity]
 ```
 
 ## ALIASES

@@ -20,7 +20,7 @@ Returns the module's internal error queue (SelfLog) plus circuit breaker state.
 ### __AllParameterSets
 
 ```
-Get-DJMLogDiagnostics [<CommonParameters>]
+Get-DJMLogDiagnostics
 ```
 
 ## ALIASES
